@@ -32,9 +32,8 @@ A spreadsheet application where **random variables are a first-class cell type**
 A cell can optionally define a **named variable** by prefixing the content with `name = ...`. For example, typing `income = A2 * 1200` into a cell defines a variable `income` whose value is the result of the formula `A2 * 1200`. The variable can then be referenced by name in other formulas (e.g. `= income * 0.3`). Variables are just aliases for the cell they're defined in — they participate in the same DAG.
 
 ### Sample counts
-- Default sample count is 10,000 per DAG.
-- Eventually configurable globally, per-DAG, and per-cell. Per-cell overrides mean antecedent cells produce more samples to feed the high-resolution cell, while other dependents only use the prefix of the array they need.
-- For now, a single global sample count is fine for the prototype.
+- Default sample count is 10,000 per DAG. Configurable globally via Settings dialog (100–1,000,000).
+- Eventually configurable per-DAG and per-cell. Per-cell overrides mean antecedent cells produce more samples to feed the high-resolution cell, while other dependents only use the prefix of the array they need.
 
 ### Evaluation model
 The dependency graph is a DAG evaluated in topological order. Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents are re-evaluated.
@@ -52,7 +51,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Variable definitions: `name = expr` syntax in any cell, usable by name in other formulas
 - [x] DAG-based recalculation on any cell edit, with cycle detection
   - Single-cell edits: detect cycle at edit time, reject/error the edited cell
-  - TODO: bulk operations (load, paste) can introduce cycles with no single culprit — needs a different strategy (e.g. mark all cells in the cycle)
+  - Bulk operations (load, paste): topoSortWithCycles marks all cycle participants with errors, evaluates the rest
 - [x] MC engine: sample arrays propagated through the DAG; scalars stay scalar until mixed with a distribution
 - [x] Cell display: show mean for scalars, show mean ± spread indicator for distributions
 - [x] Detail panel: click a cell to see its full empirical distribution as a histogram
@@ -62,6 +61,11 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Histogram hover showing per-bin percentage
 - [x] Lockable histogram range with zoom +/− and recentre controls
 - [x] Uncertainty-based cell coloring (CV → white-to-teal interpolation)
+- [x] Label variables: `:= expr` derives variable name from text cell to the left
+- [x] Keyboard shortcuts: Enter/F2 edit, = start formula, R recalc, Shift+R full recalc, Escape deselect, H help
+- [x] Settings dialog (global sample count)
+- [x] Help dialog (two pages: basics and functions)
+- [x] Sheet naming (editable in header, used as export filename)
 
 ### P1 — analysis
 - [ ] Sensitivity analysis: for a selected output cell, show rank correlation with each input

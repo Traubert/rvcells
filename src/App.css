@@ -472,17 +472,27 @@ thead .row-header {
 .detail-panel {
   border-top: 1px solid var(--border);
   background: var(--surface);
-  padding: 12px 16px;
-  min-height: 200px;
-  max-height: 300px;
-  overflow-y: auto;
+  padding: 8px 16px;
+}
+
+.detail-body {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.detail-chart {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .detail-header {
   display: flex;
   gap: 12px;
   align-items: baseline;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .detail-addr {
@@ -502,12 +512,13 @@ thead .row-header {
 }
 
 .detail-histogram {
-  margin-bottom: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
-.detail-histogram svg {
+.hist-chart-area svg {
   width: 100%;
-  height: 120px;
+  height: 180px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
 }
@@ -530,17 +541,90 @@ thead .row-header {
   margin-top: 2px;
 }
 
+.hist-chart-area {
+  position: relative;
+}
+
+.hist-chart-area svg {
+  display: block;
+}
+
+.hist-guideline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed rgba(200, 200, 220, 0.35);
+  pointer-events: none;
+}
+
+.hist-guideline-label {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 9px;
+  color: rgba(200, 200, 220, 0.6);
+  white-space: nowrap;
+}
+
+.hist-guideline-value {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 9px;
+  color: rgba(200, 200, 220, 0.45);
+  white-space: nowrap;
+}
+
+.hist-guide-toggle {
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+  margin-top: 3px;
+  align-self: flex-start;
+}
+
+.hist-guide-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text-bright);
+}
+
 .hist-hover-info {
   color: var(--text-bright);
   font-size: 11px;
 }
 
+.detail-controls {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 100px;
+}
+
 .detail-range-controls {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
+  flex-direction: column;
+  gap: 5px;
   font-size: 12px;
+}
+
+.range-locked-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.lock-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .lock-range-label {
@@ -563,7 +647,7 @@ thead .row-header {
 }
 
 .range-input {
-  width: 90px;
+  width: 60px;
   padding: 2px 4px;
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -627,10 +711,16 @@ thead .row-header {
 
 .detail-stats {
   font-size: 12px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 14px;
+  background: rgba(0, 0, 0, 0.15);
+  min-width: 170px;
 }
 
 .detail-stats td {
-  padding: 2px 12px 2px 0;
+  padding: 3px 14px 3px 0;
   border: none;
 }
 
