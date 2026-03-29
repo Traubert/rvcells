@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from "react";
 import { Grid } from "./components/Grid";
-import { createSheet } from "./engine/evaluate";
+import { createSheet, recalculate } from "./engine/evaluate";
 import { saveToFile, openFromFile } from "./engine/file";
+import { SettingsDialog } from "./components/SettingsDialog";
 import type { Sheet } from "./engine/types";
 import "./App.css";
 
@@ -9,6 +10,7 @@ export default function App() {
   const sheetRef = useRef<Sheet>(createSheet(10_000));
   const [, setVersion] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const handleSheetChange = useCallback(() => {
     setVersion((v) => v + 1);
@@ -33,6 +35,13 @@ export default function App() {
     setVersion((v) => v + 1);
   }, []);
 
+  const handleSettingsSave = useCallback((settings: { numSamples: number }) => {
+    sheetRef.current.numSamples = settings.numSamples;
+    recalculate(sheetRef.current);
+    setSettingsOpen(false);
+    setVersion((v) => v + 1);
+  }, []);
+
   return (
     <div className="app" onClick={() => menuOpen && setMenuOpen(false)}>
       <header className="app-header">
@@ -47,6 +56,8 @@ export default function App() {
             <div className="menu-dropdown">
               <button className="menu-item" onClick={handleOpen}>Import</button>
               <button className="menu-item" onClick={handleSave}>Export</button>
+              <div className="menu-divider" />
+              <button className="menu-item" onClick={() => { setSettingsOpen(true); setMenuOpen(false); }}>Settings</button>
             </div>
           )}
         </div>
@@ -59,6 +70,13 @@ export default function App() {
         />
       </header>
       <Grid sheet={sheetRef.current} onSheetChange={handleSheetChange} />
+      {settingsOpen && (
+        <SettingsDialog
+          numSamples={sheetRef.current.numSamples}
+          onSave={handleSettingsSave}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

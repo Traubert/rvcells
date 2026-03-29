@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Sheet, CellAddress, Cell } from "../engine/types";
 import { toAddress } from "../engine/types";
-import { setCellRaw, summarize } from "../engine/evaluate";
+import { setCellRaw, summarize, recalculate, recalculateFrom } from "../engine/evaluate";
 import { formatNumber } from "../format";
 import { DetailPanel, type LockedRange } from "./DetailPanel";
 
@@ -107,17 +107,17 @@ export function Grid({ sheet, onSheetChange }: GridProps) {
       if (editingAddr) return;
       if (!selectedAddr) return;
 
-      // Start editing on printable characters
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-        setEditingAddr(selectedAddr);
-        setEditValue(e.key);
-        e.preventDefault();
-      }
-      // Or on F2
-      if (e.key === "F2") {
+      // Enter or F2: start editing existing content
+      if (e.key === "Enter" || e.key === "F2") {
         setEditingAddr(selectedAddr);
         const cell = sheet.cells.get(selectedAddr);
         setEditValue(cell?.raw ?? "");
+        e.preventDefault();
+      }
+      // = : start a new formula (clears cell, enters edit mode with "=")
+      if (e.key === "=" && !e.ctrlKey && !e.metaKey) {
+        setEditingAddr(selectedAddr);
+        setEditValue("=");
         e.preventDefault();
       }
       // Arrow keys to move selection
@@ -137,6 +137,23 @@ export function Grid({ sheet, onSheetChange }: GridProps) {
       if (e.key === "Delete" || e.key === "Backspace") {
         setCellRaw(sheet, selectedAddr, "");
         onSheetChange();
+        e.preventDefault();
+      }
+      // Shift+R: full recalculate everything
+      if (e.key === "R" && e.shiftKey) {
+        recalculate(sheet);
+        onSheetChange();
+        e.preventDefault();
+      }
+      // r: recalculate current cell and dependents
+      if (e.key === "r" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        recalculateFrom(sheet, [selectedAddr]);
+        onSheetChange();
+        e.preventDefault();
+      }
+      // Escape: deselect
+      if (e.key === "Escape") {
+        setSelectedAddr(null);
         e.preventDefault();
       }
     },
