@@ -447,6 +447,33 @@ thead .row-header {
   padding: 0;
 }
 
+/* Fill handle — bottom-right corner of cell, as large as fits inside */
+.fill-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: crosshair;
+  z-index: 2;
+}
+
+.fill-handle::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+}
+
+.cell.fill-preview {
+  background: rgba(108, 99, 255, 0.15);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
 .cell-error {
   color: var(--error);
   font-size: 11px;

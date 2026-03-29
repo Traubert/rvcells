@@ -136,7 +136,7 @@ function parseDistribution(s: string): Distribution | null {
 
 type Token =
   | { type: "number"; value: number }
-  | { type: "cellRef"; col: number; row: number }
+  | { type: "cellRef"; col: number; row: number; pinCol: boolean; pinRow: boolean }
   | { type: "ident"; name: string }
   | { type: "op"; value: string }
   | { type: "lparen" }
@@ -164,26 +164,44 @@ function tokenize(input: string): Token[] {
       continue;
     }
 
-    // Identifier or cell reference
-    if (/[a-zA-Z_]/.test(input[i])) {
-      let word = "";
-      while (i < input.length && /[a-zA-Z0-9_]/.test(input[i])) {
-        word += input[i++];
-      }
-      // Cell reference: one or more uppercase letters followed by digits
-      const cellMatch = word.match(/^([A-Z]+)(\d+)$/);
-      if (cellMatch) {
-        let col = 0;
-        for (const ch of cellMatch[1]) {
-          col = col * 26 + (ch.charCodeAt(0) - 64);
+    // Cell reference with optional $ pins, or identifier
+    // Matches: $A$1, $A1, A$1, A1, or plain identifiers
+    if (input[i] === "$" || /[a-zA-Z_]/.test(input[i])) {
+      // Try to parse as a cell reference: optional $ + uppercase letters + optional $ + digits
+      const cellRefMatch = input.slice(i).match(/^(\$?)([A-Z]+)(\$?)(\d+)/);
+      if (cellRefMatch) {
+        const pinCol = cellRefMatch[1] === "$";
+        const colStr = cellRefMatch[2];
+        const pinRow = cellRefMatch[3] === "$";
+        const rowStr = cellRefMatch[4];
+        // Make sure the next char isn't a letter/digit/underscore (would mean it's an identifier)
+        const matchLen = cellRefMatch[0].length;
+        const nextChar = input[i + matchLen];
+        if (!nextChar || !/[a-zA-Z0-9_]/.test(nextChar)) {
+          let col = 0;
+          for (const ch of colStr) {
+            col = col * 26 + (ch.charCodeAt(0) - 64);
+          }
+          col -= 1;
+          const row = parseInt(rowStr, 10) - 1;
+          tokens.push({ type: "cellRef", col, row, pinCol, pinRow });
+          i += matchLen;
+          continue;
         }
-        col -= 1;
-        const row = parseInt(cellMatch[2], 10) - 1;
-        tokens.push({ type: "cellRef", col, row });
-      } else {
-        tokens.push({ type: "ident", name: word.toLowerCase() });
       }
-      continue;
+
+      // Not a cell reference — parse as identifier (but not starting with $)
+      if (/[a-zA-Z_]/.test(input[i])) {
+        let word = "";
+        while (i < input.length && /[a-zA-Z0-9_]/.test(input[i])) {
+          word += input[i++];
+        }
+        tokens.push({ type: "ident", name: word.toLowerCase() });
+        continue;
+      }
+
+      // Lone $ — shouldn't happen in valid input, treat as error
+      throw new Error(`Unexpected character: '$' at position ${i}`);
     }
 
     // Operators and punctuation
@@ -273,7 +291,13 @@ class Parser {
 
     if (tok.type === "cellRef") {
       this.advance();
-      return { type: "cellRef", col: tok.col, row: tok.row };
+      return {
+        type: "cellRef",
+        col: tok.col,
+        row: tok.row,
+        ...(tok.pinCol ? { pinCol: true } : {}),
+        ...(tok.pinRow ? { pinRow: true } : {}),
+      };
     }
 
     if (tok.type === "ident") {

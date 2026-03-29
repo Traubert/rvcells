@@ -1,8 +1,9 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { Sheet, CellAddress, Cell } from "../engine/types";
-import { toAddress } from "../engine/types";
+import { toAddress, parseAddress } from "../engine/types";
 import { setCellRaw, summarize, recalculate, recalculateFrom } from "../engine/evaluate";
 import { formatNumber } from "../format";
+import { shiftCellText } from "../engine/fill";
 import { DetailPanel, type LockedRange } from "./DetailPanel";
 
 const NUM_COLS = 26;
@@ -38,6 +39,100 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
   useEffect(() => {
     gridRef.current?.focus();
   }, []);
+
+  // --- Fill handle drag ---
+  const [fillDragTarget, setFillDragTarget] = useState<CellAddress | null>(null);
+  const fillOriginRef = useRef<{ col: number; row: number } | null>(null);
+
+  const handleFillMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!selectedAddr) return;
+      if (!sheet.cells.has(selectedAddr)) return;
+      const origin = parseAddress(selectedAddr);
+      if (!origin) return;
+      fillOriginRef.current = origin;
+      setFillDragTarget(null);
+
+      const handleMouseMove = (ev: MouseEvent) => {
+        const td = (ev.target as HTMLElement).closest("td[data-addr]") as HTMLElement | null;
+        if (td?.dataset.addr) {
+          setFillDragTarget(td.dataset.addr);
+        }
+      };
+
+      const handleMouseUp = (ev: MouseEvent) => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+
+        const td = (ev.target as HTMLElement).closest("td[data-addr]") as HTMLElement | null;
+        const targetAddr = td?.dataset.addr ?? fillDragTarget;
+        if (!targetAddr || !fillOriginRef.current || targetAddr === selectedAddr) {
+          setFillDragTarget(null);
+          fillOriginRef.current = null;
+          return;
+        }
+
+        const target = parseAddress(targetAddr);
+        if (!target) return;
+        const orig = fillOriginRef.current;
+        const sourceCell = sheet.cells.get(selectedAddr);
+        if (!sourceCell) return;
+
+        // Determine fill direction: use the axis with the larger delta
+        const dCol = target.col - orig.col;
+        const dRow = target.row - orig.row;
+
+        if (Math.abs(dRow) >= Math.abs(dCol)) {
+          // Fill vertically
+          const step = dRow > 0 ? 1 : -1;
+          for (let r = orig.row + step; step > 0 ? r <= target.row : r >= target.row; r += step) {
+            const shifted = shiftCellText(sourceCell.raw, 0, r - orig.row);
+            setCellRaw(sheet, toAddress(orig.col, r), shifted);
+          }
+        } else {
+          // Fill horizontally
+          const step = dCol > 0 ? 1 : -1;
+          for (let c = orig.col + step; step > 0 ? c <= target.col : c >= target.col; c += step) {
+            const shifted = shiftCellText(sourceCell.raw, c - orig.col, 0);
+            setCellRaw(sheet, toAddress(c, orig.row), shifted);
+          }
+        }
+
+        setFillDragTarget(null);
+        fillOriginRef.current = null;
+        onSheetChange();
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [selectedAddr, sheet, onSheetChange]
+  );
+
+  // Compute fill preview range for highlighting — only when actively dragging
+  const fillPreviewAddrs = useMemo(() => {
+    if (!fillDragTarget || !selectedAddr || !fillOriginRef.current) return null;
+    const orig = fillOriginRef.current;
+    const target = parseAddress(fillDragTarget);
+    if (!target) return null;
+    const set = new Set<CellAddress>();
+    const dCol = target.col - orig.col;
+    const dRow = target.row - orig.row;
+    if (Math.abs(dRow) >= Math.abs(dCol)) {
+      const step = dRow > 0 ? 1 : -1;
+      for (let r = orig.row + step; step > 0 ? r <= target.row : r >= target.row; r += step) {
+        set.add(toAddress(orig.col, r));
+      }
+    } else {
+      const step = dCol > 0 ? 1 : -1;
+      for (let c = orig.col + step; step > 0 ? c <= target.col : c >= target.col; c += step) {
+        set.add(toAddress(c, orig.row));
+      }
+    }
+    return set;
+  }, [fillDragTarget, selectedAddr]);
 
   const handleCellClick = useCallback(
     (addr: CellAddress) => {
@@ -213,7 +308,8 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
                   return (
                     <td
                       key={c}
-                      className={`cell ${isSelected ? "selected" : ""} ${cell?.error ? "error" : ""} ${cell?.result?.kind === "samples" ? "has-distribution" : ""}`}
+                      data-addr={addr}
+                      className={`cell ${isSelected ? "selected" : ""} ${cell?.error ? "error" : ""} ${cell?.result?.kind === "samples" ? "has-distribution" : ""}${fillPreviewAddrs?.has(addr) ? " fill-preview" : ""}`}
                       onClick={() => handleCellClick(addr)}
                       onDoubleClick={() => handleCellDoubleClick(addr)}
                     >
@@ -228,6 +324,12 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
                         />
                       ) : (
                         <CellDisplay cell={cell} />
+                      )}
+                      {isSelected && !isEditing && cell && (
+                        <div
+                          className="fill-handle"
+                          onMouseDown={handleFillMouseDown}
+                        />
                       )}
                     </td>
                   );

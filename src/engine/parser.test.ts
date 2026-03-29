@@ -315,4 +315,32 @@ describe("parseExpr", () => {
       },
     });
   });
+
+  describe("pinned cell references ($)", () => {
+    it("parses $A1 as pinned column", () => {
+      expect(parseExpr("$A1")).toEqual({ type: "cellRef", col: 0, row: 0, pinCol: true });
+    });
+
+    it("parses A$1 as pinned row", () => {
+      expect(parseExpr("A$1")).toEqual({ type: "cellRef", col: 0, row: 0, pinRow: true });
+    });
+
+    it("parses $A$1 as both pinned", () => {
+      expect(parseExpr("$A$1")).toEqual({ type: "cellRef", col: 0, row: 0, pinCol: true, pinRow: true });
+    });
+
+    it("parses unpinned as before (no pin properties)", () => {
+      expect(parseExpr("A1")).toEqual({ type: "cellRef", col: 0, row: 0 });
+    });
+
+    it("parses pinned refs in expressions", () => {
+      const result = parseExpr("$A1 + B$2");
+      expect(result).toEqual({
+        type: "binOp",
+        op: "+",
+        left: { type: "cellRef", col: 0, row: 0, pinCol: true },
+        right: { type: "cellRef", col: 1, row: 1, pinRow: true },
+      });
+    });
+  });
 });

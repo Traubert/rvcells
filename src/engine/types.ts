@@ -14,7 +14,7 @@ export type Distribution =
 /** AST node types for parsed formulas */
 export type Expr =
   | { type: "number"; value: number }
-  | { type: "cellRef"; col: number; row: number } // 0-indexed
+  | { type: "cellRef"; col: number; row: number; pinCol?: boolean; pinRow?: boolean } // 0-indexed
   | { type: "varRef"; name: string }
   | { type: "binOp"; op: "+" | "-" | "*" | "/"; left: Expr; right: Expr }
   | { type: "unaryMinus"; operand: Expr }

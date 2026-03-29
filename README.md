@@ -35,6 +35,15 @@ npm run dev
 
 Then open http://localhost:5173/.
 
+## Production build
+
+```bash
+npm run build
+npx vite preview
+```
+
+The development server (`npm run dev`) uses React's development mode JSX runtime, which adds significant overhead. Production builds are fast. Use `npm run build` + `npx vite preview` for the real experience.
+
 ## Tests
 
 ```bash
