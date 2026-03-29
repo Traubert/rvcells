@@ -221,6 +221,102 @@
   background: var(--accent);
 }
 
+/* Help dialog */
+.help-dialog {
+  min-width: 420px;
+  max-width: 500px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.help-page-indicator {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.help-nav-arrow {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.help-nav-arrow:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-bright);
+}
+
+.help-nav-arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.help-body {
+  overflow-y: auto;
+}
+
+.help-body section {
+  margin-bottom: 14px;
+}
+
+.help-body h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.help-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.help-table td {
+  padding: 2px 8px 2px 0;
+  border: none;
+  vertical-align: top;
+}
+
+.help-table td:first-child {
+  white-space: nowrap;
+  color: var(--text-bright);
+  width: 45%;
+}
+
+.help-table td:last-child {
+  color: var(--text-dim);
+}
+
+.help-table code {
+  font-size: 12px;
+  color: var(--distribution);
+}
+
+.help-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 6px 0 0;
+}
+
+.help-note code {
+  font-size: 11px;
+  color: var(--distribution);
+}
+
 
 .sheet-name:hover {
   border-color: var(--border);

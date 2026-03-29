@@ -15,9 +15,10 @@ function colLabel(col: number): string {
 interface GridProps {
   sheet: Sheet;
   onSheetChange: () => void;
+  onShowHelp?: () => void;
 }
 
-export function Grid({ sheet, onSheetChange }: GridProps) {
+export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   const [editingAddr, setEditingAddr] = useState<CellAddress | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -105,6 +106,14 @@ export function Grid({ sheet, onSheetChange }: GridProps) {
   const handleGridKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (editingAddr) return;
+
+      // H: show help (works even without selection)
+      if ((e.key === "h" || e.key === "H") && !e.ctrlKey && !e.metaKey) {
+        onShowHelp?.();
+        e.preventDefault();
+        return;
+      }
+
       if (!selectedAddr) return;
 
       // Enter or F2: start editing existing content
@@ -157,7 +166,7 @@ export function Grid({ sheet, onSheetChange }: GridProps) {
         e.preventDefault();
       }
     },
-    [editingAddr, selectedAddr, sheet, onSheetChange]
+    [editingAddr, selectedAddr, sheet, onSheetChange, onShowHelp]
   );
 
   return (

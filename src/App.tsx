@@ -3,6 +3,7 @@ import { Grid } from "./components/Grid";
 import { createSheet, recalculate } from "./engine/evaluate";
 import { saveToFile, openFromFile } from "./engine/file";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { HelpDialog } from "./components/HelpDialog";
 import type { Sheet } from "./engine/types";
 import "./App.css";
 
@@ -11,6 +12,7 @@ export default function App() {
   const [, setVersion] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const handleSheetChange = useCallback(() => {
     setVersion((v) => v + 1);
@@ -58,6 +60,7 @@ export default function App() {
               <button className="menu-item" onClick={handleSave}>Export</button>
               <div className="menu-divider" />
               <button className="menu-item" onClick={() => { setSettingsOpen(true); setMenuOpen(false); }}>Settings</button>
+              <button className="menu-item" onClick={() => { setHelpOpen(true); setMenuOpen(false); }}>Help</button>
             </div>
           )}
         </div>
@@ -69,7 +72,10 @@ export default function App() {
           spellCheck={false}
         />
       </header>
-      <Grid sheet={sheetRef.current} onSheetChange={handleSheetChange} />
+      <Grid sheet={sheetRef.current} onSheetChange={handleSheetChange} onShowHelp={() => setHelpOpen(true)} />
+      {helpOpen && (
+        <HelpDialog onClose={() => setHelpOpen(false)} />
+      )}
       {settingsOpen && (
         <SettingsDialog
           numSamples={sheetRef.current.numSamples}
