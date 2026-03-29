@@ -427,6 +427,10 @@ thead .row-header {
   z-index: 1;
 }
 
+.cell.in-selection {
+  background: rgba(108, 99, 255, 0.12);
+}
+
 .cell.error {
   background: rgba(255, 107, 107, 0.1);
 }

@@ -13,6 +13,24 @@ function colLabel(col: number): string {
   return String.fromCharCode(65 + col);
 }
 
+/** Get the selection rectangle bounds, or null if no multi-selection */
+function selectionBounds(
+  active: CellAddress | null,
+  anchor: CellAddress | null
+): { minCol: number; maxCol: number; minRow: number; maxRow: number } | null {
+  if (!active || !anchor) return null;
+  const a = parseAddress(active);
+  const b = parseAddress(anchor);
+  if (!a || !b) return null;
+  if (a.col === b.col && a.row === b.row) return null; // single cell, no multi-select
+  return {
+    minCol: Math.min(a.col, b.col),
+    maxCol: Math.max(a.col, b.col),
+    minRow: Math.min(a.row, b.row),
+    maxRow: Math.max(a.row, b.row),
+  };
+}
+
 interface GridProps {
   sheet: Sheet;
   onSheetChange: () => void;
@@ -21,6 +39,8 @@ interface GridProps {
 
 export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
+  // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
+  const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
   const [editingAddr, setEditingAddr] = useState<CellAddress | null>(null);
   const [editValue, setEditValue] = useState("");
   const [lockedRange, setLockedRange] = useState<LockedRange | null>(null);
@@ -144,6 +164,7 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
         }
       }
       setSelectedAddr(addr);
+      setSelAnchor(null); // clear multi-selection on click
     },
     [editingAddr, sheet, onSheetChange]
   );
@@ -211,35 +232,56 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
 
       if (!selectedAddr) return;
 
-      // Enter or F2: start editing existing content
+      // Enter or F2: start editing existing content (single selection only)
       if (e.key === "Enter" || e.key === "F2") {
-        setEditingAddr(selectedAddr);
-        const cell = sheet.cells.get(selectedAddr);
-        setEditValue(cell?.raw ?? "");
+        if (!selAnchor) {
+          setEditingAddr(selectedAddr);
+          const cell = sheet.cells.get(selectedAddr);
+          setEditValue(cell?.raw ?? "");
+        }
         e.preventDefault();
       }
-      // = : start a new formula (clears cell, enters edit mode with "=")
+      // = : start a new formula (single selection only)
       if (e.key === "=" && !e.ctrlKey && !e.metaKey) {
-        setEditingAddr(selectedAddr);
-        setEditValue("=");
+        if (!selAnchor) {
+          setEditingAddr(selectedAddr);
+          setEditValue("=");
+        }
         e.preventDefault();
       }
-      // Arrow keys to move selection
+      // Arrow keys: plain = move + clear multi-select, shift = extend selection
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
-        const match = selectedAddr.match(/^([A-Z]+)(\d+)$/);
-        if (!match) return;
-        let col = match[1].charCodeAt(0) - 65;
-        let row = parseInt(match[2], 10) - 1;
+        const parsed = parseAddress(selectedAddr);
+        if (!parsed) return;
+        let { col, row } = parsed;
         if (e.key === "ArrowUp") row = Math.max(0, row - 1);
         if (e.key === "ArrowDown") row = Math.min(NUM_ROWS - 1, row + 1);
         if (e.key === "ArrowLeft") col = Math.max(0, col - 1);
         if (e.key === "ArrowRight") col = Math.min(NUM_COLS - 1, col + 1);
-        setSelectedAddr(toAddress(col, row));
+        const newAddr = toAddress(col, row);
+        setSelectedAddr(newAddr);
+        if (e.shiftKey) {
+          // Start or extend selection — anchor stays where it was
+          if (!selAnchor) setSelAnchor(selectedAddr);
+        } else {
+          // Plain arrow — clear multi-selection
+          setSelAnchor(null);
+        }
       }
-      // Delete/Backspace to clear cell
+      // Delete/Backspace: clear selected cell(s)
       if (e.key === "Delete" || e.key === "Backspace") {
-        setCellRaw(sheet, selectedAddr, "");
+        const bounds = selectionBounds(selectedAddr, selAnchor);
+        if (bounds) {
+          for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+            for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+              setCellRaw(sheet, toAddress(c, r), "");
+            }
+          }
+        } else {
+          setCellRaw(sheet, selectedAddr, "");
+        }
+        setSelAnchor(null);
         onSheetChange();
         e.preventDefault();
       }
@@ -255,14 +297,21 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
         onSheetChange();
         e.preventDefault();
       }
-      // Escape: deselect
+      // Escape: clear multi-selection first, then deselect
       if (e.key === "Escape") {
-        setSelectedAddr(null);
+        if (selAnchor) {
+          setSelAnchor(null);
+        } else {
+          setSelectedAddr(null);
+        }
         e.preventDefault();
       }
     },
-    [editingAddr, selectedAddr, sheet, onSheetChange, onShowHelp]
+    [editingAddr, selectedAddr, selAnchor, sheet, onSheetChange, onShowHelp]
   );
+
+  const selBounds = selectionBounds(selectedAddr, selAnchor);
+  const isMultiSelect = selBounds !== null;
 
   return (
     <div className="grid-container" ref={gridRef} tabIndex={0} onKeyDown={handleGridKeyDown}>
@@ -302,14 +351,15 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
                 {Array.from({ length: NUM_COLS }, (_, c) => {
                   const addr = toAddress(c, r);
                   const cell = sheet.cells.get(addr);
-                  const isSelected = addr === selectedAddr;
+                  const isActive = addr === selectedAddr;
                   const isEditing = addr === editingAddr;
+                  const inSel = selBounds && c >= selBounds.minCol && c <= selBounds.maxCol && r >= selBounds.minRow && r <= selBounds.maxRow;
 
                   return (
                     <td
                       key={c}
                       data-addr={addr}
-                      className={`cell ${isSelected ? "selected" : ""} ${cell?.error ? "error" : ""} ${cell?.result?.kind === "samples" ? "has-distribution" : ""}${fillPreviewAddrs?.has(addr) ? " fill-preview" : ""}`}
+                      className={`cell ${isActive ? "selected" : ""} ${inSel && !isActive ? "in-selection" : ""} ${cell?.error ? "error" : ""} ${cell?.result?.kind === "samples" ? "has-distribution" : ""}${fillPreviewAddrs?.has(addr) ? " fill-preview" : ""}`}
                       onClick={() => handleCellClick(addr)}
                       onDoubleClick={() => handleCellDoubleClick(addr)}
                     >
@@ -325,7 +375,7 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
                       ) : (
                         <CellDisplay cell={cell} />
                       )}
-                      {isSelected && !isEditing && cell && (
+                      {isActive && !isEditing && !isMultiSelect && cell && (
                         <div
                           className="fill-handle"
                           onMouseDown={handleFillMouseDown}
@@ -340,8 +390,8 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
         </table>
       </div>
 
-      {/* Detail panel for selected cell — only for distributions */}
-      {selectedAddr && sheet.cells.get(selectedAddr)?.result?.kind === "samples" && (
+      {/* Detail panel for selected cell — only for single distribution selection */}
+      {selectedAddr && !isMultiSelect && sheet.cells.get(selectedAddr)?.result?.kind === "samples" && (
         <DetailPanel
           addr={selectedAddr}
           cell={sheet.cells.get(selectedAddr)!}
