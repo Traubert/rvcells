@@ -9,11 +9,13 @@ import type { CellContent, Distribution, Expr } from "./types";
  *   "Normal(100, 10)"         → distribution
  *   "= A1 + B2"              → formula
  *   "income = A1 * 12"       → formula with variable name
+ *   ":= A1 + B2"             → formula, variable name from left neighbour cell
  *   anything else             → text
  *
- * Returns { content, variableName? }
+ * Returns { content, variableName?, labelVar? }
+ * labelVar=true means the variable name should be derived from the cell to the left.
  */
-export function parseCell(raw: string): { content: CellContent; variableName?: string } {
+export function parseCell(raw: string): { content: CellContent; variableName?: string; labelVar?: boolean } {
   const trimmed = raw.trim();
 
   if (trimmed === "") {
@@ -33,6 +35,16 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
       return { content: rhsParsed, variableName: varName };
     }
     // If RHS didn't parse as formula/dist/number, treat whole thing as text
+    return { content: { kind: "text", value: trimmed } };
+  }
+
+  // Label-variable formula: starts with ":="
+  if (trimmed.startsWith(":=")) {
+    const exprStr = trimmed.slice(2).trim();
+    const rhsParsed = parseRHS(exprStr);
+    if (rhsParsed) {
+      return { content: rhsParsed, labelVar: true };
+    }
     return { content: { kind: "text", value: trimmed } };
   }
 

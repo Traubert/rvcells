@@ -130,6 +130,32 @@ describe("parseCell", () => {
       expect(result.content.kind).toBe("formula");
     });
   });
+
+  describe("label-variable (:=) syntax", () => {
+    it("parses := with a number", () => {
+      const result = parseCell(":= 5000");
+      expect(result.labelVar).toBe(true);
+      expect(result.variableName).toBeUndefined();
+      expect(result.content).toEqual({ kind: "number", value: 5000 });
+    });
+
+    it("parses := with a formula", () => {
+      const result = parseCell(":= A1 + B1");
+      expect(result.labelVar).toBe(true);
+      expect(result.content.kind).toBe("formula");
+    });
+
+    it("parses := with a distribution", () => {
+      const result = parseCell(":= Normal(1000, 100)");
+      expect(result.labelVar).toBe(true);
+      expect(result.content.kind).toBe("distribution");
+    });
+
+    it("does not set variableName directly", () => {
+      const result = parseCell(":= 5000");
+      expect(result.variableName).toBeUndefined();
+    });
+  });
 });
 
 describe("parseExpr", () => {

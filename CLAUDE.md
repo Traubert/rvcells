@@ -16,6 +16,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/parser.test.ts` — parser test suite (vitest)
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
 - `src/engine/evaluate.ts` — DAG evaluation, incremental recalculation, cycle detection, built-in functions, summary stats, histograms
+- `src/engine/file.ts` — JSON file format, import/export (browser download/upload)
 - `src/format.ts` — shared number formatting (3 significant figures)
 - `src/components/Grid.tsx` — spreadsheet grid UI, keyboard navigation, formula bar
 - `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls
@@ -69,7 +70,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Conditional formatting / heatmap coloring based on variance or spread
 
 ### P2 — usability
-- [ ] Save/load spreadsheet as JSON file
+- [x] Import/export spreadsheet as JSON file (browser download/upload)
+- [ ] Save/load to browser storage
 - [ ] Undo/redo
 - [ ] Cell formatting (labels, number formats)
 - [ ] Functions on ranges: SUM, MEAN, etc.

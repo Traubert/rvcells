@@ -1,5 +1,5 @@
 import type { Cell, CellAddress, CellResult, Expr, Sheet } from "./types";
-import { toAddress } from "./types";
+import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
 
@@ -34,8 +34,39 @@ function exprDeps(expr: Expr): { cellRefs: CellAddress[]; varRefs: string[] } {
   return { cellRefs, varRefs };
 }
 
+/** Convert text to a valid variable name: lowercase, spaces/hyphens to underscores */
+function textToVarName(text: string): string | undefined {
+  const name = text.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (!name || /^\d/.test(name)) return undefined;
+  return name;
+}
+
+/**
+ * Resolve labelVar cells: for cells with labelVar=true, derive the variable
+ * name from the text cell immediately to the left. Updates cell.variableName.
+ */
+function resolveLabelVars(cells: Map<CellAddress, Cell>): void {
+  for (const [addr, cell] of cells) {
+    if (!cell.labelVar) continue;
+    // Find the cell to the left
+    const parsed = parseAddress(addr);
+    if (!parsed || parsed.col === 0) {
+      cell.variableName = undefined;
+      continue;
+    }
+    const leftAddr = toAddress(parsed.col - 1, parsed.row);
+    const leftCell = cells.get(leftAddr);
+    if (leftCell?.content.kind === "text") {
+      cell.variableName = textToVarName(leftCell.content.value);
+    } else {
+      cell.variableName = undefined;
+    }
+  }
+}
+
 /** Build a map from variable name → cell address */
 function buildVarMap(cells: Map<CellAddress, Cell>): Map<string, CellAddress> {
+  resolveLabelVars(cells);
   const varMap = new Map<string, CellAddress>();
   for (const [addr, cell] of cells) {
     if (cell.variableName) {
@@ -526,13 +557,23 @@ export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[]): void
 export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell | undefined {
   if (raw.trim() === "") {
     sheet.cells.delete(addr);
-    // Need to recalc anything that depended on this cell
-    recalculateFrom(sheet, [addr]);
+    // Need to recalc anything that depended on this cell,
+    // and the cell to the right if it uses labelVar
+    const dirty = [addr];
+    const parsed = parseAddress(addr);
+    if (parsed) {
+      const rightAddr = toAddress(parsed.col + 1, parsed.row);
+      const rightCell = sheet.cells.get(rightAddr);
+      if (rightCell?.labelVar) {
+        dirty.push(rightAddr);
+      }
+    }
+    recalculateFrom(sheet, dirty);
     return undefined;
   }
 
-  const { content, variableName } = parseCell(raw);
-  const cell: Cell = { raw, content, variableName };
+  const { content, variableName, labelVar } = parseCell(raw);
+  const cell: Cell = { raw, content, variableName, labelVar };
 
   // Check for cycles before committing the edit
   if (content.kind === "formula") {
@@ -558,7 +599,35 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
   }
 
   sheet.cells.set(addr, cell);
-  recalculateFrom(sheet, [addr]);
+
+  // If this is a text cell, also dirty the cell to the right if it uses labelVar,
+  // and any cells that referenced the old variable name
+  const dirty = [addr];
+  if (content.kind === "text" || content.kind === "empty") {
+    const parsed = parseAddress(addr);
+    if (parsed) {
+      const rightAddr = toAddress(parsed.col + 1, parsed.row);
+      const rightCell = sheet.cells.get(rightAddr);
+      if (rightCell?.labelVar) {
+        // Get the old variable name before rebuilding
+        const oldVarName = rightCell.variableName;
+        dirty.push(rightAddr);
+        // Also dirty any cells that referenced the old variable name
+        if (oldVarName) {
+          for (const [depAddr, depCell] of sheet.cells) {
+            if (depCell.content.kind === "formula") {
+              const { varRefs } = exprDeps(depCell.content.expr);
+              if (varRefs.includes(oldVarName)) {
+                dirty.push(depAddr);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  recalculateFrom(sheet, dirty);
   return cell;
 }
 

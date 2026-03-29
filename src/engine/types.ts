@@ -33,6 +33,7 @@ export interface Cell {
   raw: string; // what the user typed
   content: CellContent;
   variableName?: string; // if the cell defines a variable (e.g. "income = ...")
+  labelVar?: boolean; // if true, variable name is derived from the text cell to the left
   result?: CellResult;
   error?: string;
 }
