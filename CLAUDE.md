@@ -17,6 +17,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
 - `src/engine/evaluate.ts` — DAG evaluation, incremental recalculation, cycle detection, built-in functions, summary stats, histograms
 - `src/engine/file.ts` — JSON file format, import/export (browser download/upload)
+- `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
 - `src/components/Grid.tsx` — spreadsheet grid UI, keyboard navigation, formula bar
 - `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls
@@ -66,6 +67,11 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Settings dialog (global sample count)
 - [x] Help dialog (two pages: basics and functions)
 - [x] Sheet naming (editable in header, used as export filename)
+- [x] Bernoulli(p) and Discrete(p1, ..., pN) distributions
+- [x] resample(cell): re-evaluate sub-DAG with fresh random draws
+- [x] Multi-cell selection (Shift+Arrow) with bulk delete
+- [x] Histogram guidelines (σ and percentile modes)
+- [x] Range unit selector (value, σ, percentile) for locked range
 
 ### P1 — analysis
 - [ ] Sensitivity analysis: for a selected output cell, show rank correlation with each input
@@ -79,6 +85,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Undo/redo
 - [ ] Cell formatting (labels, number formats)
 - [ ] Functions on ranges: SUM, MEAN, etc.
+- [x] Range fill: drag fill handle to copy cell with shifted references
+- [x] $ pinning in cell references ($A1, A$1, $A$1)
 - [ ] Resizable grid
 - [ ] Copy/paste
 

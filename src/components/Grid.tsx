@@ -41,19 +41,32 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
-  const [editingAddr, setEditingAddr] = useState<CellAddress | null>(null);
+  const [editingAddr, setEditingAddrRaw] = useState<CellAddress | null>(null);
+  const [editingInBar, setEditingInBar] = useState(false);
   const [editValue, setEditValue] = useState("");
+
+  function startEditing(addr: CellAddress, value: string, inBar: boolean) {
+    setEditingAddrRaw(addr);
+    setEditValue(value);
+    setEditingInBar(inBar);
+  }
+  function stopEditing() {
+    setEditingAddrRaw(null);
+    setEditingInBar(false);
+  }
   const [lockedRange, setLockedRange] = useState<LockedRange | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const barInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (editingAddr && inputRef.current) {
+    if (editingAddr && !editingInBar && inputRef.current) {
       inputRef.current.focus();
     } else if (!editingAddr && gridRef.current) {
       gridRef.current.focus();
     }
-  }, [editingAddr]);
+    // Formula bar input focuses itself via autoFocus
+  }, [editingAddr, editingInBar]);
 
   // Focus grid on mount
   useEffect(() => {
@@ -157,11 +170,13 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
   const handleCellClick = useCallback(
     (addr: CellAddress) => {
       if (editingAddr && editingAddr !== addr) {
-        if (inputRef.current) {
-          setCellRaw(sheet, editingAddr, inputRef.current.value);
-          setEditingAddr(null);
-          onSheetChange();
-        }
+        // Commit from whichever input is active
+        const value = editingInBar
+          ? barInputRef.current?.value ?? editValue
+          : inputRef.current?.value ?? editValue;
+        setCellRaw(sheet, editingAddr, value);
+        stopEditing();
+        onSheetChange();
       }
       setSelectedAddr(addr);
       setSelAnchor(null); // clear multi-selection on click
@@ -171,9 +186,8 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
 
   const handleCellDoubleClick = useCallback(
     (addr: CellAddress) => {
-      setEditingAddr(addr);
       const cell = sheet.cells.get(addr);
-      setEditValue(cell?.raw ?? "");
+      startEditing(addr, cell?.raw ?? "", false);
     },
     [sheet]
   );
@@ -181,7 +195,7 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
   const commitEdit = useCallback(
     (addr: CellAddress, value: string) => {
       setCellRaw(sheet, addr, value);
-      setEditingAddr(null);
+      stopEditing();
       onSheetChange();
     },
     [sheet, onSheetChange]
@@ -201,7 +215,7 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
           }
         }
       } else if (e.key === "Escape") {
-        setEditingAddr(null);
+        stopEditing();
       } else if (e.key === "Tab") {
         e.preventDefault();
         commitEdit(addr, e.currentTarget.value);
@@ -235,17 +249,15 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
       // Enter or F2: start editing existing content (single selection only)
       if (e.key === "Enter" || e.key === "F2") {
         if (!selAnchor) {
-          setEditingAddr(selectedAddr);
           const cell = sheet.cells.get(selectedAddr);
-          setEditValue(cell?.raw ?? "");
+          startEditing(selectedAddr, cell?.raw ?? "", false);
         }
         e.preventDefault();
       }
       // = : start a new formula (single selection only)
       if (e.key === "=" && !e.ctrlKey && !e.metaKey) {
         if (!selAnchor) {
-          setEditingAddr(selectedAddr);
-          setEditValue("=");
+          startEditing(selectedAddr, "=", false);
         }
         e.preventDefault();
       }
@@ -323,13 +335,40 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
             ? `(${sheet.cells.get(selectedAddr)!.variableName})`
             : ""}
         </span>
-        <span className="formula-bar-content">
-          {selectedAddr
-            ? editingAddr === selectedAddr
-              ? editValue
-              : sheet.cells.get(selectedAddr)?.raw ?? ""
-            : ""}
-        </span>
+        {editingAddr === selectedAddr && editingInBar && selectedAddr ? (
+          <input
+            ref={barInputRef}
+            className="formula-bar-input"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                commitEdit(selectedAddr, e.currentTarget.value);
+              } else if (e.key === "Escape") {
+                stopEditing();
+              }
+              e.stopPropagation();
+            }}
+            onBlur={(e) => commitEdit(selectedAddr, e.currentTarget.value)}
+            autoFocus
+          />
+        ) : (
+          <span
+            className="formula-bar-content"
+            onClick={() => {
+              if (selectedAddr) {
+                const cell = sheet.cells.get(selectedAddr);
+                startEditing(selectedAddr, cell?.raw ?? "", true);
+              }
+            }}
+          >
+            {selectedAddr
+              ? editingAddr === selectedAddr
+                ? editValue
+                : sheet.cells.get(selectedAddr)?.raw ?? ""
+              : ""}
+          </span>
+        )}
       </div>
 
       <div className="grid-scroll">

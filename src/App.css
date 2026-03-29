@@ -353,6 +353,19 @@
 .formula-bar-content {
   color: var(--text-bright);
   flex: 1;
+  cursor: text;
+}
+
+.formula-bar-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: inherit;
+  padding: 1px 4px;
+  border-radius: 2px;
 }
 
 /* Grid container */
