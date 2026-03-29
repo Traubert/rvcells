@@ -437,6 +437,119 @@ describe("bulk recalculation with cycles", () => {
   });
 });
 
+describe("bernoulli and discrete", () => {
+  it("bernoulli produces samples of 0 and 1 with correct mean", () => {
+    const sheet = makeSheet({ A1: "= Bernoulli(0.7)" }, 5000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    expect(mean(sheet, "A1")).toBeCloseTo(0.7, 1);
+  });
+
+  it("bernoulli(0) produces all zeros", () => {
+    const sheet = makeSheet({ A1: "= Bernoulli(0)" }, 1000);
+    expect(mean(sheet, "A1")).toBe(0);
+  });
+
+  it("bernoulli(1) produces all ones", () => {
+    const sheet = makeSheet({ A1: "= Bernoulli(1)" }, 1000);
+    expect(mean(sheet, "A1")).toBe(1);
+  });
+
+  it("discrete produces correct distribution", () => {
+    const sheet = makeSheet({ A1: "= Discrete(0.5, 0.3, 0.2)" }, 10000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    // Mean should be 0*0.5 + 1*0.3 + 2*0.2 = 0.7
+    expect(mean(sheet, "A1")).toBeCloseTo(0.7, 1);
+  });
+
+  it("bernoulli works elementwise with if for Markov chains", () => {
+    // Two-state Markov chain: state 1 has 90% stay prob, state 0 has 50% transition to 1
+    const sheet = makeSheet({
+      A1: "1",  // initial state: all employed
+      A2: "= if(A1, Bernoulli(0.9), Bernoulli(0.5))",
+      A3: "= if(A2, Bernoulli(0.9), Bernoulli(0.5))",
+      A4: "= if(A3, Bernoulli(0.9), Bernoulli(0.5))",
+    }, 10000);
+    // After several steps, mean should be between 0 and 1
+    // Stationary distribution: p = 0.5/(0.1+0.5) = 5/6 ≈ 0.833
+    const m = mean(sheet, "A4");
+    expect(m).toBeGreaterThan(0.7);
+    expect(m).toBeLessThan(0.95);
+  });
+});
+
+describe("resample", () => {
+  it("resample produces samples with same distribution but different draws", () => {
+    const sheet = makeSheet({
+      A1: "Normal(100, 10)",
+      B1: "= resample(A1)",
+    }, 5000);
+    expect(sheet.cells.get("B1")?.result?.kind).toBe("samples");
+    // Same distribution parameters
+    expect(mean(sheet, "B1")).toBeCloseTo(100, -1);
+    expect(std(sheet, "B1")).toBeCloseTo(10, 0);
+    // But different samples — check that they're not the same array
+    const a = sheet.cells.get("A1")!.result! as { kind: "samples"; values: Float64Array };
+    const b = sheet.cells.get("B1")!.result! as { kind: "samples"; values: Float64Array };
+    expect(a.values).not.toBe(b.values);
+    // Correlation should be near zero (independent draws)
+    let sumAB = 0, sumA = 0, sumB = 0, sumA2 = 0, sumB2 = 0;
+    const n = a.values.length;
+    for (let i = 0; i < n; i++) {
+      sumA += a.values[i]; sumB += b.values[i];
+      sumA2 += a.values[i] ** 2; sumB2 += b.values[i] ** 2;
+      sumAB += a.values[i] * b.values[i];
+    }
+    const corr = (sumAB / n - (sumA / n) * (sumB / n)) /
+      (Math.sqrt(sumA2 / n - (sumA / n) ** 2) * Math.sqrt(sumB2 / n - (sumB / n) ** 2));
+    expect(Math.abs(corr)).toBeLessThan(0.05);
+  });
+
+  it("resample re-evaluates the entire sub-DAG", () => {
+    const sheet = makeSheet({
+      A1: "Normal(0, 1)",
+      B1: "= A1 * 10 + 50",  // derived distribution: mean 50, std 10
+      C1: "= resample(B1)",
+    }, 5000);
+    expect(mean(sheet, "C1")).toBeCloseTo(50, -1);
+    expect(std(sheet, "C1")).toBeCloseTo(10, 0);
+  });
+
+  it("resample of a scalar returns the same scalar", () => {
+    const sheet = makeSheet({
+      A1: "42",
+      B1: "= resample(A1)",
+    });
+    expect(isScalar(sheet, "B1")).toBe(true);
+    expect(scalarValue(sheet, "B1")).toBe(42);
+  });
+
+  it("resample works with variable references", () => {
+    const sheet = makeSheet({
+      A1: "price = Normal(100, 10)",
+      B1: "= resample(price)",
+    }, 5000);
+    expect(sheet.cells.get("B1")?.result?.kind).toBe("samples");
+    expect(mean(sheet, "B1")).toBeCloseTo(100, -1);
+  });
+
+  it("multiple resamples of same cell are independent", () => {
+    const sheet = makeSheet({
+      A1: "Normal(0, 1)",
+      B1: "= resample(A1)",
+      C1: "= resample(A1)",
+    }, 5000);
+    const b = sheet.cells.get("B1")!.result! as { kind: "samples"; values: Float64Array };
+    const c = sheet.cells.get("C1")!.result! as { kind: "samples"; values: Float64Array };
+    expect(b.values).not.toBe(c.values);
+    // Check they're not identical
+    let same = true;
+    for (let i = 0; i < 10; i++) {
+      if (b.values[i] !== c.values[i]) { same = false; break; }
+    }
+    expect(same).toBe(false);
+  });
+});
+
 describe("summary statistics", () => {
   it("scalar has zero std and all percentiles equal", () => {
     const sheet = makeSheet({ A1: "42" });

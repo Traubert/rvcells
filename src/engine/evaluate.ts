@@ -193,7 +193,8 @@ function evalExpr(
   expr: Expr,
   results: Map<CellAddress, CellResult>,
   varMap: Map<string, CellAddress>,
-  n: number
+  n: number,
+  cells: Map<CellAddress, Cell>,
 ): CellResult {
   switch (expr.type) {
     case "number":
@@ -211,13 +212,13 @@ function evalExpr(
     }
 
     case "binOp": {
-      const left = evalExpr(expr.left, results, varMap, n);
-      const right = evalExpr(expr.right, results, varMap, n);
+      const left = evalExpr(expr.left, results, varMap, n, cells);
+      const right = evalExpr(expr.right, results, varMap, n, cells);
       return binOp(expr.op, left, right, n);
     }
 
     case "unaryMinus": {
-      const operand = evalExpr(expr.operand, results, varMap, n);
+      const operand = evalExpr(expr.operand, results, varMap, n, cells);
       if (operand.kind === "scalar") {
         return { kind: "scalar", value: -operand.value };
       }
@@ -227,7 +228,7 @@ function evalExpr(
     }
 
     case "funcCall":
-      return evalFunc(expr.name, expr.args, results, varMap, n);
+      return evalFunc(expr.name, expr.args, results, varMap, n, cells);
   }
 }
 
@@ -259,15 +260,72 @@ function applyElementwise(
   return { kind: "samples", values: out };
 }
 
+/**
+ * Collect the transitive sub-DAG rooted at `addr` (the cell itself + all its
+ * dependencies, recursively). Returns addresses in topological order
+ * (deepest dependencies first).
+ */
+function collectSubDag(
+  addr: CellAddress,
+  cells: Map<CellAddress, Cell>,
+  varMap: Map<string, CellAddress>
+): CellAddress[] {
+  const order: CellAddress[] = [];
+  const visited = new Set<CellAddress>();
+
+  function visit(a: CellAddress) {
+    if (visited.has(a)) return;
+    visited.add(a);
+    const cell = cells.get(a);
+    if (cell) {
+      for (const dep of cellDeps(cell, varMap)) {
+        visit(dep);
+      }
+    }
+    order.push(a);
+  }
+
+  visit(addr);
+  return order;
+}
+
 /** Evaluate a function call */
 function evalFunc(
   name: string,
   argExprs: Expr[],
   results: Map<CellAddress, CellResult>,
   varMap: Map<string, CellAddress>,
-  n: number
+  n: number,
+  cells: Map<CellAddress, Cell>,
 ): CellResult {
-  const args = argExprs.map((e) => evalExpr(e, results, varMap, n));
+  // resample() is special — it doesn't evaluate its argument normally
+  if (name === "resample") {
+    if (argExprs.length !== 1) throw new Error("resample(cell) takes 1 argument");
+    const arg = argExprs[0];
+    // Resolve the target cell address
+    let targetAddr: CellAddress;
+    if (arg.type === "cellRef") {
+      targetAddr = toAddress(arg.col, arg.row);
+    } else if (arg.type === "varRef") {
+      const resolved = varMap.get(arg.name);
+      if (!resolved) throw new Error(`Unknown variable: ${arg.name}`);
+      targetAddr = resolved;
+    } else {
+      throw new Error("resample() argument must be a cell reference or variable");
+    }
+    // Collect the sub-DAG and re-evaluate it with fresh samples
+    const subDag = collectSubDag(targetAddr, cells, varMap);
+    const freshResults = new Map<CellAddress, CellResult>();
+    for (const subAddr of subDag) {
+      const subCell = cells.get(subAddr);
+      if (subCell) {
+        evalCell(subAddr, subCell, freshResults, varMap, n, cells, true);
+      }
+    }
+    return freshResults.get(targetAddr) ?? { kind: "scalar", value: 0 };
+  }
+
+  const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells));
 
   switch (name) {
     // Math functions — 1 argument
@@ -355,45 +413,91 @@ function evalFunc(
       return { kind: "samples", values: sample({ type: "Beta", alpha: alphaR.value, beta: betaR.value }, n) };
     }
 
+    // Bernoulli distribution — samples 0/1
+    case "bernoulli": {
+      if (args.length !== 1) throw new Error("bernoulli(p) takes 1 argument");
+      const [pR] = args;
+      if (pR.kind !== "scalar") throw new Error("bernoulli() parameter must be scalar");
+      const p = pR.value;
+      const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) out[i] = Math.random() < p ? 1 : 0;
+      return { kind: "samples", values: out };
+    }
+
+    // Discrete distribution — samples from {0, 1, ..., N-1}
+    case "discrete": {
+      if (args.length < 2) throw new Error("discrete(p1, p2, ...) takes at least 2 arguments");
+      const probs: number[] = [];
+      for (const a of args) {
+        if (a.kind !== "scalar") throw new Error("discrete() parameters must be scalars");
+        probs.push(a.value);
+      }
+      // Build cumulative distribution
+      const cdf: number[] = [];
+      let cumsum = 0;
+      for (const p of probs) {
+        cumsum += p;
+        cdf.push(cumsum);
+      }
+      const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const u = Math.random() * cumsum; // normalize by cumsum to handle non-unit sums
+        let j = 0;
+        while (j < cdf.length - 1 && u >= cdf[j]) j++;
+        out[i] = j;
+      }
+      return { kind: "samples", values: out };
+    }
+
     default:
       throw new Error(`Unknown function: ${name}`);
   }
 }
 
-/** Evaluate a single cell, storing its result. */
+/**
+ * Evaluate a single cell, storing its result.
+ * If `tempOnly` is true (used by resample), only writes to the results map,
+ * not to cell.result/cell.error — this avoids mutating the main cell state.
+ */
 function evalCell(
   addr: CellAddress,
   cell: Cell,
   results: Map<CellAddress, CellResult>,
   varMap: Map<string, CellAddress>,
-  numSamples: number
+  numSamples: number,
+  cells: Map<CellAddress, Cell>,
+  tempOnly = false,
 ): void {
-  cell.error = undefined;
+  if (!tempOnly) cell.error = undefined;
+  let result: CellResult | undefined;
   try {
     switch (cell.content.kind) {
       case "empty":
       case "text":
-        cell.result = undefined;
+        result = undefined;
         break;
       case "number":
-        cell.result = { kind: "scalar", value: cell.content.value };
+        result = { kind: "scalar", value: cell.content.value };
         break;
       case "distribution":
-        cell.result = {
+        result = {
           kind: "samples",
           values: sample(cell.content.dist, numSamples),
         };
         break;
       case "formula":
-        cell.result = evalExpr(cell.content.expr, results, varMap, numSamples);
+        result = evalExpr(cell.content.expr, results, varMap, numSamples, cells);
         break;
     }
   } catch (e) {
-    cell.error = (e as Error).message;
-    cell.result = undefined;
+    if (!tempOnly) cell.error = (e as Error).message;
+    result = undefined;
   }
-  if (cell.result) {
-    results.set(addr, cell.result);
+  if (!tempOnly) {
+    cell.result = result;
+  }
+  if (result) {
+    results.set(addr, result);
   } else {
     results.delete(addr);
   }
@@ -508,7 +612,7 @@ export function recalculateBulk(sheet: Sheet): void {
   // Evaluate non-cycle cells in topological order
   for (const addr of order) {
     const cell = sheet.cells.get(addr)!;
-    evalCell(addr, cell, results, varMap, sheet.numSamples);
+    evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
   }
 }
 
@@ -520,7 +624,7 @@ export function recalculate(sheet: Sheet): void {
 
   for (const addr of order) {
     const cell = sheet.cells.get(addr)!;
-    evalCell(addr, cell, results, varMap, sheet.numSamples);
+    evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
   }
 }
 
@@ -548,7 +652,7 @@ export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[]): void
   for (const addr of fullOrder) {
     if (!dirty.has(addr)) continue;
     const cell = sheet.cells.get(addr)!;
-    evalCell(addr, cell, results, varMap, sheet.numSamples);
+    evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
   }
 }
 

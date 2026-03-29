@@ -88,6 +88,17 @@ const PAGES = [
             </tbody>
           </table>
         </section>
+        <section>
+          <h3>Sampling functions</h3>
+          <table className="help-table">
+            <tbody>
+              <tr><td><code>Bernoulli(p)</code></td><td>Samples 0 or 1 with probability p</td></tr>
+              <tr><td><code>Discrete(p1, p2, ...)</code></td><td>Samples from &#123;0, 1, ...&#125; with given probabilities</td></tr>
+              <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
+            </tbody>
+          </table>
+          <p className="help-note">Use <code>if()</code> + <code>Bernoulli()</code> for Markov chains. <code>resample()</code> re-evaluates the entire sub-DAG with fresh random numbers.</p>
+        </section>
       </>
     ),
   },
