@@ -42,6 +42,7 @@ export type CellAddress = string;
 
 /** The full spreadsheet state */
 export interface Sheet {
+  name: string;
   cells: Map<CellAddress, Cell>;
   numSamples: number;
 }

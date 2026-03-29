@@ -409,6 +409,78 @@ function collectDirty(
   return dirty;
 }
 
+/**
+ * Topological sort with cycle detection for bulk operations.
+ * Returns { order, cycleAddrs } where cycleAddrs contains cells that are
+ * part of or depend on a cycle.
+ */
+function topoSortWithCycles(
+  cells: Map<CellAddress, Cell>,
+  varMap: Map<string, CellAddress>
+): { order: CellAddress[]; cycleAddrs: Set<CellAddress> } {
+  const order: CellAddress[] = [];
+  const visited = new Set<CellAddress>();
+  const visiting = new Set<CellAddress>();
+  const cycleAddrs = new Set<CellAddress>();
+
+  function visit(addr: CellAddress): boolean {
+    if (cycleAddrs.has(addr)) return false;
+    if (visited.has(addr)) return true;
+    if (visiting.has(addr)) {
+      cycleAddrs.add(addr);
+      return false;
+    }
+    visiting.add(addr);
+
+    const cell = cells.get(addr);
+    if (cell) {
+      for (const dep of cellDeps(cell, varMap)) {
+        if (!visit(dep)) {
+          cycleAddrs.add(addr);
+          visiting.delete(addr);
+          return false;
+        }
+      }
+    }
+
+    visiting.delete(addr);
+    visited.add(addr);
+    order.push(addr);
+    return true;
+  }
+
+  for (const addr of cells.keys()) {
+    visit(addr);
+  }
+
+  return { order, cycleAddrs };
+}
+
+/**
+ * Bulk recalculation with cycle detection — used when loading files or pasting.
+ * Marks cells in cycles with errors, evaluates everything else.
+ */
+export function recalculateBulk(sheet: Sheet): void {
+  const varMap = buildVarMap(sheet.cells);
+  const { order, cycleAddrs } = topoSortWithCycles(sheet.cells, varMap);
+  const results = new Map<CellAddress, CellResult>();
+
+  // Mark cycle cells with errors
+  for (const addr of cycleAddrs) {
+    const cell = sheet.cells.get(addr);
+    if (cell) {
+      cell.error = "Circular reference";
+      cell.result = undefined;
+    }
+  }
+
+  // Evaluate non-cycle cells in topological order
+  for (const addr of order) {
+    const cell = sheet.cells.get(addr)!;
+    evalCell(addr, cell, results, varMap, sheet.numSamples);
+  }
+}
+
 /** Recalculate the entire sheet from scratch. */
 export function recalculate(sheet: Sheet): void {
   const varMap = buildVarMap(sheet.cells);
@@ -491,8 +563,8 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
 }
 
 /** Create an empty sheet */
-export function createSheet(numSamples = 10_000): Sheet {
-  return { cells: new Map(), numSamples };
+export function createSheet(numSamples = 10_000, name = "Untitled table"): Sheet {
+  return { name, cells: new Map(), numSamples };
 }
 
 /** Compute summary stats from a CellResult */
