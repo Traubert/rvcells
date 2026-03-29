@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/favicon.svg" alt="rvcells logo" width="200" height="200">
+</p>
+
 # rvcells
 
 A spreadsheet where **random variables are a first-class cell type**. Define uncertain values as probability distributions, write formulas that combine them, and see how uncertainty propagates through your model via Monte Carlo simulation.
