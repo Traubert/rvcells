@@ -3,10 +3,34 @@ import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
 
+/** Global cell address: "sheetIdx:cellAddr" */
+type GlobalAddr = string;
+
+function toGlobal(sheetIdx: number, addr: CellAddress): GlobalAddr {
+  return `${sheetIdx}:${addr}`;
+}
+
+function fromGlobal(ga: GlobalAddr): { sheetIdx: number; addr: CellAddress } {
+  const sep = ga.indexOf(":");
+  return { sheetIdx: Number(ga.slice(0, sep)), addr: ga.slice(sep + 1) };
+}
+
+/** Cross-sheet reference info */
+interface SheetRef {
+  sheet: string;
+  addr?: CellAddress;   // for sheetCellRef
+  varName?: string;      // for sheetVarRef
+}
+
 /** Collect all cell/variable dependencies from an expression */
-function exprDeps(expr: Expr): { cellRefs: CellAddress[]; varRefs: string[] } {
+function exprDeps(expr: Expr): {
+  cellRefs: CellAddress[];
+  varRefs: string[];
+  sheetRefs: SheetRef[];
+} {
   const cellRefs: CellAddress[] = [];
   const varRefs: string[] = [];
+  const sheetRefs: SheetRef[] = [];
 
   function walk(e: Expr) {
     switch (e.type) {
@@ -17,6 +41,12 @@ function exprDeps(expr: Expr): { cellRefs: CellAddress[]; varRefs: string[] } {
         break;
       case "varRef":
         varRefs.push(e.name);
+        break;
+      case "sheetCellRef":
+        sheetRefs.push({ sheet: e.sheet, addr: toAddress(e.col, e.row) });
+        break;
+      case "sheetVarRef":
+        sheetRefs.push({ sheet: e.sheet, varName: e.name });
         break;
       case "binOp":
         walk(e.left);
@@ -31,7 +61,7 @@ function exprDeps(expr: Expr): { cellRefs: CellAddress[]; varRefs: string[] } {
     }
   }
   walk(expr);
-  return { cellRefs, varRefs };
+  return { cellRefs, varRefs, sheetRefs };
 }
 
 /** Convert text to a valid variable name: lowercase, spaces/hyphens to underscores */
@@ -95,7 +125,21 @@ function buildVarMap(cells: Map<CellAddress, Cell>): { varMap: Map<string, CellA
   return { varMap, dupAddrs, clearedAddrs: clearedAddrs.filter(a => !dupAddrs.has(a)) };
 }
 
-/** Get all direct dependencies of a cell as cell addresses */
+/** Find sheet index by name (case-insensitive) */
+function findSheetIndex(allSheets: Sheet[], name: string): number {
+  const lower = name.toLowerCase();
+  return allSheets.findIndex((s) => s.name.toLowerCase() === lower);
+}
+
+/** Cross-sheet evaluation context */
+interface CrossSheetCtx {
+  allSheets: Sheet[];
+  currentSheetIdx: number;
+  allVarMaps: Map<string, CellAddress>[];
+  allResults: Map<CellAddress, CellResult>[];
+}
+
+/** Get all direct dependencies of a cell as cell addresses (local only) */
 function cellDeps(cell: Cell, varMap: Map<string, CellAddress>): CellAddress[] {
   if (cell.content.kind !== "formula") return [];
   const { cellRefs, varRefs } = exprDeps(cell.content.expr);
@@ -103,6 +147,41 @@ function cellDeps(cell: Cell, varMap: Map<string, CellAddress>): CellAddress[] {
   for (const v of varRefs) {
     const addr = varMap.get(v);
     if (addr) deps.push(addr);
+  }
+  return deps;
+}
+
+/** Get all direct dependencies of a cell as global addresses (cross-sheet aware) */
+function globalCellDeps(
+  cell: Cell,
+  sheetIdx: number,
+  allSheets: Sheet[],
+  allVarMaps: Map<string, CellAddress>[],
+): GlobalAddr[] {
+  if (cell.content.kind !== "formula") return [];
+  const { cellRefs, varRefs, sheetRefs } = exprDeps(cell.content.expr);
+  const deps: GlobalAddr[] = [];
+
+  // Local cell refs
+  for (const addr of cellRefs) {
+    deps.push(toGlobal(sheetIdx, addr));
+  }
+  // Local var refs
+  const varMap = allVarMaps[sheetIdx];
+  for (const v of varRefs) {
+    const addr = varMap.get(v);
+    if (addr) deps.push(toGlobal(sheetIdx, addr));
+  }
+  // Cross-sheet refs
+  for (const ref of sheetRefs) {
+    const targetIdx = findSheetIndex(allSheets, ref.sheet);
+    if (targetIdx < 0) continue; // unknown sheet — will error at eval time
+    if (ref.addr) {
+      deps.push(toGlobal(targetIdx, ref.addr));
+    } else if (ref.varName) {
+      const addr = allVarMaps[targetIdx].get(ref.varName);
+      if (addr) deps.push(toGlobal(targetIdx, addr));
+    }
   }
   return deps;
 }
@@ -214,6 +293,7 @@ function evalExpr(
   varMap: Map<string, CellAddress>,
   n: number,
   cells: Map<CellAddress, Cell>,
+  ctx?: CrossSheetCtx,
 ): CellResult {
   switch (expr.type) {
     case "number":
@@ -230,14 +310,32 @@ function evalExpr(
       return results.get(addr) ?? { kind: "scalar", value: 0 };
     }
 
+    case "sheetCellRef": {
+      if (!ctx) throw new Error("Cross-sheet references require multi-sheet context");
+      const targetIdx = findSheetIndex(ctx.allSheets, expr.sheet);
+      if (targetIdx < 0) throw new Error(`Unknown sheet: ${expr.sheet}`);
+      const addr = toAddress(expr.col, expr.row);
+      return ctx.allResults[targetIdx].get(addr) ?? { kind: "scalar", value: 0 };
+    }
+
+    case "sheetVarRef": {
+      if (!ctx) throw new Error("Cross-sheet references require multi-sheet context");
+      const targetIdx = findSheetIndex(ctx.allSheets, expr.sheet);
+      if (targetIdx < 0) throw new Error(`Unknown sheet: ${expr.sheet}`);
+      const targetVarMap = ctx.allVarMaps[targetIdx];
+      const addr = targetVarMap.get(expr.name);
+      if (!addr) throw new Error(`Unknown variable "${expr.name}" in sheet "${expr.sheet}"`);
+      return ctx.allResults[targetIdx].get(addr) ?? { kind: "scalar", value: 0 };
+    }
+
     case "binOp": {
-      const left = evalExpr(expr.left, results, varMap, n, cells);
-      const right = evalExpr(expr.right, results, varMap, n, cells);
+      const left = evalExpr(expr.left, results, varMap, n, cells, ctx);
+      const right = evalExpr(expr.right, results, varMap, n, cells, ctx);
       return binOp(expr.op, left, right, n);
     }
 
     case "unaryMinus": {
-      const operand = evalExpr(expr.operand, results, varMap, n, cells);
+      const operand = evalExpr(expr.operand, results, varMap, n, cells, ctx);
       if (operand.kind === "scalar") {
         return { kind: "scalar", value: -operand.value };
       }
@@ -247,7 +345,7 @@ function evalExpr(
     }
 
     case "funcCall":
-      return evalFunc(expr.name, expr.args, results, varMap, n, cells);
+      return evalFunc(expr.name, expr.args, results, varMap, n, cells, ctx);
   }
 }
 
@@ -316,6 +414,7 @@ function evalFunc(
   varMap: Map<string, CellAddress>,
   n: number,
   cells: Map<CellAddress, Cell>,
+  ctx?: CrossSheetCtx,
 ): CellResult {
   // resample() is special — it doesn't evaluate its argument normally
   if (name === "resample") {
@@ -338,13 +437,13 @@ function evalFunc(
     for (const subAddr of subDag) {
       const subCell = cells.get(subAddr);
       if (subCell) {
-        evalCell(subAddr, subCell, freshResults, varMap, n, cells, true);
+        evalCell(subAddr, subCell, freshResults, varMap, n, cells, true, ctx);
       }
     }
     return freshResults.get(targetAddr) ?? { kind: "scalar", value: 0 };
   }
 
-  const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells));
+  const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells, ctx));
 
   switch (name) {
     // Math functions — 1 argument
@@ -486,6 +585,7 @@ function evalCell(
   numSamples: number,
   cells: Map<CellAddress, Cell>,
   tempOnly = false,
+  ctx?: CrossSheetCtx,
 ): void {
   if (!tempOnly) cell.error = undefined;
   let result: CellResult | undefined;
@@ -505,7 +605,7 @@ function evalCell(
         };
         break;
       case "formula":
-        result = evalExpr(cell.content.expr, results, varMap, numSamples, cells);
+        result = evalExpr(cell.content.expr, results, varMap, numSamples, cells, ctx);
         break;
     }
   } catch (e) {
@@ -610,81 +710,310 @@ function topoSortWithCycles(
   return { order, cycleAddrs };
 }
 
+// ─── Multi-sheet helpers ─────────────────────────────────────────────
+
+/** Build varMaps for all sheets. Returns array parallel to sheets. */
+function buildAllVarMaps(sheets: Sheet[]): {
+  allVarMaps: Map<string, CellAddress>[];
+  allDupAddrs: Set<CellAddress>[];
+  allClearedAddrs: CellAddress[][];
+} {
+  const allVarMaps: Map<string, CellAddress>[] = [];
+  const allDupAddrs: Set<CellAddress>[] = [];
+  const allClearedAddrs: CellAddress[][] = [];
+  for (const sheet of sheets) {
+    const { varMap, dupAddrs, clearedAddrs } = buildVarMap(sheet.cells);
+    allVarMaps.push(varMap);
+    allDupAddrs.push(dupAddrs);
+    allClearedAddrs.push(clearedAddrs);
+  }
+  return { allVarMaps, allDupAddrs, allClearedAddrs };
+}
+
+/** Global topological sort across all sheets. */
+function globalTopoSort(
+  allSheets: Sheet[],
+  allVarMaps: Map<string, CellAddress>[],
+): GlobalAddr[] {
+  const order: GlobalAddr[] = [];
+  const visited = new Set<GlobalAddr>();
+
+  function visit(ga: GlobalAddr) {
+    if (visited.has(ga)) return;
+    visited.add(ga);
+
+    const { sheetIdx, addr } = fromGlobal(ga);
+    const cell = allSheets[sheetIdx]?.cells.get(addr);
+    if (cell) {
+      for (const dep of globalCellDeps(cell, sheetIdx, allSheets, allVarMaps)) {
+        visit(dep);
+      }
+    }
+    order.push(ga);
+  }
+
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const addr of allSheets[si].cells.keys()) {
+      visit(toGlobal(si, addr));
+    }
+  }
+  return order;
+}
+
+/** Global topological sort with cycle detection. */
+function globalTopoSortWithCycles(
+  allSheets: Sheet[],
+  allVarMaps: Map<string, CellAddress>[],
+): { order: GlobalAddr[]; cycleAddrs: Set<GlobalAddr> } {
+  const order: GlobalAddr[] = [];
+  const visited = new Set<GlobalAddr>();
+  const visiting = new Set<GlobalAddr>();
+  const cycleAddrs = new Set<GlobalAddr>();
+
+  function visit(ga: GlobalAddr): boolean {
+    if (cycleAddrs.has(ga)) return false;
+    if (visited.has(ga)) return true;
+    if (visiting.has(ga)) {
+      cycleAddrs.add(ga);
+      return false;
+    }
+    visiting.add(ga);
+
+    const { sheetIdx, addr } = fromGlobal(ga);
+    const cell = allSheets[sheetIdx]?.cells.get(addr);
+    if (cell) {
+      for (const dep of globalCellDeps(cell, sheetIdx, allSheets, allVarMaps)) {
+        if (!visit(dep)) {
+          cycleAddrs.add(ga);
+          visiting.delete(ga);
+          return false;
+        }
+      }
+    }
+
+    visiting.delete(ga);
+    visited.add(ga);
+    order.push(ga);
+    return true;
+  }
+
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const addr of allSheets[si].cells.keys()) {
+      visit(toGlobal(si, addr));
+    }
+  }
+  return { order, cycleAddrs };
+}
+
+/** Build global reverse dependency map. */
+function globalBuildReverseDeps(
+  allSheets: Sheet[],
+  allVarMaps: Map<string, CellAddress>[],
+): Map<GlobalAddr, Set<GlobalAddr>> {
+  const rev = new Map<GlobalAddr, Set<GlobalAddr>>();
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const [addr, cell] of allSheets[si].cells) {
+      const ga = toGlobal(si, addr);
+      for (const dep of globalCellDeps(cell, si, allSheets, allVarMaps)) {
+        let set = rev.get(dep);
+        if (!set) {
+          set = new Set();
+          rev.set(dep, set);
+        }
+        set.add(ga);
+      }
+    }
+  }
+  return rev;
+}
+
+/** Collect all downstream dependents of dirty global addresses (BFS). */
+function globalCollectDirty(
+  roots: GlobalAddr[],
+  reverseDeps: Map<GlobalAddr, Set<GlobalAddr>>,
+): Set<GlobalAddr> {
+  const dirty = new Set<GlobalAddr>(roots);
+  const queue = [...roots];
+  while (queue.length > 0) {
+    const ga = queue.shift()!;
+    const dependents = reverseDeps.get(ga);
+    if (dependents) {
+      for (const dep of dependents) {
+        if (!dirty.has(dep)) {
+          dirty.add(dep);
+          queue.push(dep);
+        }
+      }
+    }
+  }
+  return dirty;
+}
+
+/** Check if adding a cell at globalAddr with deps would create a global cycle. */
+function globalWouldCycle(
+  addr: GlobalAddr,
+  newDeps: GlobalAddr[],
+  allSheets: Sheet[],
+  allVarMaps: Map<string, CellAddress>[],
+): boolean {
+  const visited = new Set<GlobalAddr>();
+
+  function canReach(current: GlobalAddr): boolean {
+    if (current === addr) return true;
+    if (visited.has(current)) return false;
+    visited.add(current);
+
+    const { sheetIdx, addr: cellAddr } = fromGlobal(current);
+    const cell = allSheets[sheetIdx]?.cells.get(cellAddr);
+    if (!cell) return false;
+    for (const dep of globalCellDeps(cell, sheetIdx, allSheets, allVarMaps)) {
+      if (canReach(dep)) return true;
+    }
+    return false;
+  }
+
+  for (const dep of newDeps) {
+    if (canReach(dep)) return true;
+  }
+  return false;
+}
+
+// ─── Exported recalculation functions ────────────────────────────────
+
 /**
- * Bulk recalculation with cycle detection — used when loading files or pasting.
- * Marks cells in cycles with errors, evaluates everything else.
+ * Bulk recalculation with cycle detection across all sheets.
+ * Used when loading files or pasting.
  */
 export function recalculateBulk(sheet: Sheet): void {
-  const { varMap, dupAddrs } = buildVarMap(sheet.cells);
-  const { order, cycleAddrs } = topoSortWithCycles(sheet.cells, varMap);
-  const results = new Map<CellAddress, CellResult>();
+  recalculateAllBulk([sheet]);
+}
+
+/** Bulk recalculate all sheets with cross-sheet support and cycle detection. */
+export function recalculateAllBulk(allSheets: Sheet[]): void {
+  const { allVarMaps, allDupAddrs } = buildAllVarMaps(allSheets);
+  const { order, cycleAddrs } = globalTopoSortWithCycles(allSheets, allVarMaps);
+  const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
 
   // Mark cycle cells with errors
-  for (const addr of cycleAddrs) {
-    const cell = sheet.cells.get(addr);
+  for (const ga of cycleAddrs) {
+    const { sheetIdx, addr } = fromGlobal(ga);
+    const cell = allSheets[sheetIdx]?.cells.get(addr);
     if (cell) {
       cell.error = "Circular reference";
       cell.result = undefined;
     }
   }
 
-  // Evaluate non-cycle cells in topological order (skip duplicates)
-  for (const addr of order) {
-    if (dupAddrs.has(addr)) continue;
+  // Evaluate in global topological order
+  for (const ga of order) {
+    if (cycleAddrs.has(ga)) continue;
+    const { sheetIdx, addr } = fromGlobal(ga);
+    if (allDupAddrs[sheetIdx].has(addr)) continue;
+    const sheet = allSheets[sheetIdx];
     const cell = sheet.cells.get(addr)!;
-    evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
+    const ctx: CrossSheetCtx = {
+      allSheets,
+      currentSheetIdx: sheetIdx,
+      allVarMaps,
+      allResults,
+    };
+    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], sheet.numSamples, sheet.cells, false, ctx);
   }
 }
 
-/** Recalculate the entire sheet from scratch. */
+/** Recalculate all sheets from scratch. */
 export function recalculate(sheet: Sheet): void {
-  const { varMap, dupAddrs } = buildVarMap(sheet.cells);
-  const order = topoSort(sheet.cells, varMap);
-  const results = new Map<CellAddress, CellResult>();
+  recalculateAll([sheet]);
+}
 
-  for (const addr of order) {
-    if (dupAddrs.has(addr)) continue;
+export function recalculateAll(allSheets: Sheet[]): void {
+  const { allVarMaps, allDupAddrs } = buildAllVarMaps(allSheets);
+  const order = globalTopoSort(allSheets, allVarMaps);
+  const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
+
+  for (const ga of order) {
+    const { sheetIdx, addr } = fromGlobal(ga);
+    if (allDupAddrs[sheetIdx].has(addr)) continue;
+    const sheet = allSheets[sheetIdx];
     const cell = sheet.cells.get(addr)!;
-    evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
+    const ctx: CrossSheetCtx = {
+      allSheets,
+      currentSheetIdx: sheetIdx,
+      allVarMaps,
+      allResults,
+    };
+    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], sheet.numSamples, sheet.cells, false, ctx);
   }
 }
 
 /**
- * Incremental recalculation: only re-evaluate the changed cells and
- * their downstream dependents. Other cells keep their existing results.
+ * Incremental recalculation across all sheets: only re-evaluate changed cells
+ * and their downstream dependents (including cross-sheet).
  */
 export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[]): void {
-  const { varMap, dupAddrs, clearedAddrs } = buildVarMap(sheet.cells);
-  const reverseDeps = buildReverseDeps(sheet.cells, varMap);
-  const dirty = collectDirty([...changedAddrs, ...clearedAddrs], reverseDeps);
+  recalculateAllFrom([sheet], 0, changedAddrs);
+}
 
-  // We need the full topological order to know *which order* to eval the dirty cells
-  const fullOrder = topoSort(sheet.cells, varMap);
+export function recalculateAllFrom(
+  allSheets: Sheet[],
+  changedSheetIdx: number,
+  changedAddrs: CellAddress[],
+): void {
+  const { allVarMaps, allDupAddrs, allClearedAddrs } = buildAllVarMaps(allSheets);
 
-  // Build a results map from existing (clean) cell results
-  const results = new Map<CellAddress, CellResult>();
-  for (const [addr, cell] of sheet.cells) {
-    if (cell.result) {
-      results.set(addr, cell.result);
+  const globalRoots = changedAddrs.map((a) => toGlobal(changedSheetIdx, a));
+  // Include cleared duplicate addrs as dirty roots
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const addr of allClearedAddrs[si]) {
+      globalRoots.push(toGlobal(si, addr));
     }
   }
 
-  // Re-evaluate only dirty cells, in topological order (skip duplicates)
-  for (const addr of fullOrder) {
-    if (!dirty.has(addr)) continue;
-    if (dupAddrs.has(addr)) continue;
+  const reverseDeps = globalBuildReverseDeps(allSheets, allVarMaps);
+  const dirty = globalCollectDirty(globalRoots, reverseDeps);
+
+  const fullOrder = globalTopoSort(allSheets, allVarMaps);
+
+  // Build results maps from existing cell results
+  const allResults: Map<CellAddress, CellResult>[] = allSheets.map((sheet) => {
+    const results = new Map<CellAddress, CellResult>();
+    for (const [addr, cell] of sheet.cells) {
+      if (cell.result) results.set(addr, cell.result);
+    }
+    return results;
+  });
+
+  // Re-evaluate only dirty cells in global topological order
+  for (const ga of fullOrder) {
+    if (!dirty.has(ga)) continue;
+    const { sheetIdx, addr } = fromGlobal(ga);
+    if (allDupAddrs[sheetIdx].has(addr)) continue;
+    const sheet = allSheets[sheetIdx];
     const cell = sheet.cells.get(addr)!;
-    evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
+    const ctx: CrossSheetCtx = {
+      allSheets,
+      currentSheetIdx: sheetIdx,
+      allVarMaps,
+      allResults,
+    };
+    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], sheet.numSamples, sheet.cells, false, ctx);
   }
 }
 
-/** Set a cell's raw value, parse it, and recalculate the sheet.
+/** Set a cell's raw value, parse it, and recalculate.
  *  Returns the cell, which will have an error set if the edit would create a cycle. */
-export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell | undefined {
+export function setCellRaw(
+  sheet: Sheet,
+  addr: CellAddress,
+  raw: string,
+  allSheets?: Sheet[],
+  sheetIndex?: number,
+): Cell | undefined {
+  const sheets = allSheets ?? [sheet];
+  const si = sheetIndex ?? 0;
+
   if (raw.trim() === "") {
     sheet.cells.delete(addr);
-    // Need to recalc anything that depended on this cell,
-    // and the cell to the right if it uses labelVar
     const dirty = [addr];
     const parsed = parseAddress(addr);
     if (parsed) {
@@ -694,7 +1023,7 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
         dirty.push(rightAddr);
       }
     }
-    recalculateFrom(sheet, dirty);
+    recalculateAllFrom(sheets, si, dirty);
     return undefined;
   }
 
@@ -703,14 +1032,13 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
 
   // Check for cycles before committing the edit
   if (content.kind === "formula") {
-    // Temporarily put the new cell in so we can compute its deps
     const prev = sheet.cells.get(addr);
     sheet.cells.set(addr, cell);
-    const { varMap } = buildVarMap(sheet.cells);
-    const deps = cellDeps(cell, varMap);
+    const { allVarMaps } = buildAllVarMaps(sheets);
+    const deps = globalCellDeps(cell, si, sheets, allVarMaps);
+    const globalAddr = toGlobal(si, addr);
 
-    if (wouldCycle(addr, deps, sheet.cells, varMap)) {
-      // Roll back — restore previous cell or remove
+    if (globalWouldCycle(globalAddr, deps, sheets, allVarMaps)) {
       if (prev) {
         sheet.cells.set(addr, prev);
       } else {
@@ -718,7 +1046,6 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
       }
       cell.error = "Circular reference";
       cell.result = undefined;
-      // Still put the errored cell in so the UI can display it
       sheet.cells.set(addr, cell);
       return cell;
     }
@@ -726,8 +1053,7 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
 
   sheet.cells.set(addr, cell);
 
-  // If this is a text cell, also dirty the cell to the right if it uses labelVar,
-  // and any cells that referenced the old variable name
+  // If this is a text cell, also dirty the cell to the right if it uses labelVar
   const dirty = [addr];
   if (content.kind === "text" || content.kind === "empty") {
     const parsed = parseAddress(addr);
@@ -735,11 +1061,10 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
       const rightAddr = toAddress(parsed.col + 1, parsed.row);
       const rightCell = sheet.cells.get(rightAddr);
       if (rightCell?.labelVar) {
-        // Get the old variable name before rebuilding
         const oldVarName = rightCell.variableName;
         dirty.push(rightAddr);
-        // Also dirty any cells that referenced the old variable name
         if (oldVarName) {
+          // Dirty cells in this sheet that referenced the old variable name
           for (const [depAddr, depCell] of sheet.cells) {
             if (depCell.content.kind === "formula") {
               const { varRefs } = exprDeps(depCell.content.expr);
@@ -753,13 +1078,91 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
     }
   }
 
-  recalculateFrom(sheet, dirty);
+  recalculateAllFrom(sheets, si, dirty);
   return cell;
 }
 
 /** Create an empty sheet */
 export function createSheet(numSamples = 10_000, name = "Untitled sheet"): Sheet {
   return { name, cells: new Map(), numSamples };
+}
+
+/**
+ * Find all cross-sheet references to a given sheet name.
+ * Returns array of { sheetIndex, addr, sheetName } for each cell that references the target.
+ */
+export function findRefsToSheet(
+  allSheets: Sheet[],
+  targetSheetName: string,
+): { sheetIndex: number; addr: CellAddress }[] {
+  const targetLower = targetSheetName.toLowerCase();
+  const refs: { sheetIndex: number; addr: CellAddress }[] = [];
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const [addr, cell] of allSheets[si].cells) {
+      if (cell.content.kind !== "formula") continue;
+      const { sheetRefs } = exprDeps(cell.content.expr);
+      if (sheetRefs.some((r) => r.sheet.toLowerCase() === targetLower)) {
+        refs.push({ sheetIndex: si, addr });
+      }
+    }
+  }
+  return refs;
+}
+
+/**
+ * Rename a sheet and update all cross-sheet references in all sheets.
+ * Modifies raw cell strings and re-parses affected cells.
+ */
+export function renameSheet(
+  allSheets: Sheet[],
+  sheetIndex: number,
+  newName: string,
+): void {
+  const oldName = allSheets[sheetIndex].name;
+  allSheets[sheetIndex].name = newName;
+
+  // Build regex patterns for old name references in raw cell text
+  // Handle both unquoted (OldName.ref) and quoted ('Old Name'.ref) forms
+  const needsQuotes = (name: string) => /[^a-zA-Z0-9_]/.test(name);
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // Build replacement patterns
+  const patterns: { regex: RegExp; replacement: string }[] = [];
+
+  // Unquoted old name
+  if (!needsQuotes(oldName)) {
+    patterns.push({
+      regex: new RegExp(`(?<![a-zA-Z0-9_'])${escapeRegex(oldName)}\\.`, "gi"),
+      replacement: needsQuotes(newName) ? `'${newName}'.` : `${newName}.`,
+    });
+  }
+  // Quoted old name
+  patterns.push({
+    regex: new RegExp(`'${escapeRegex(oldName)}'\\s*\\.`, "gi"),
+    replacement: needsQuotes(newName) ? `'${newName}'.` : `${newName}.`,
+  });
+
+  // Update all cells in all sheets
+  for (const sheet of allSheets) {
+    for (const [addr, cell] of sheet.cells) {
+      let raw = cell.raw;
+      let changed = false;
+      for (const { regex, replacement } of patterns) {
+        const newRaw = raw.replace(regex, replacement);
+        if (newRaw !== raw) {
+          raw = newRaw;
+          changed = true;
+        }
+      }
+      if (changed) {
+        const { content, variableName, labelVar } = parseCell(raw);
+        sheet.cells.set(addr, { raw, content, variableName, labelVar });
+      }
+    }
+  }
+
+  // Recalculate everything
+  recalculateAllBulk(allSheets);
 }
 
 /** Compute summary stats from a CellResult */

@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { Sheet, CellAddress, Cell } from "../engine/types";
 import { toAddress, parseAddress } from "../engine/types";
-import { setCellRaw, summarize, recalculate, recalculateFrom } from "../engine/evaluate";
+import { setCellRaw, summarize, recalculateAll, recalculateAllFrom } from "../engine/evaluate";
 import { formatNumber } from "../format";
 import { shiftCellText } from "../engine/fill";
 import { DetailPanel, type LockedRange } from "./DetailPanel";
@@ -33,11 +33,13 @@ function selectionBounds(
 
 interface GridProps {
   sheet: Sheet;
+  allSheets: Sheet[];
+  sheetIndex: number;
   onSheetChange: () => void;
   onShowHelp?: () => void;
 }
 
-export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
+export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
@@ -122,14 +124,14 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
           const step = dRow > 0 ? 1 : -1;
           for (let r = orig.row + step; step > 0 ? r <= target.row : r >= target.row; r += step) {
             const shifted = shiftCellText(sourceCell.raw, 0, r - orig.row);
-            setCellRaw(sheet, toAddress(orig.col, r), shifted);
+            setCellRaw(sheet, toAddress(orig.col, r), shifted, allSheets, sheetIndex);
           }
         } else {
           // Fill horizontally
           const step = dCol > 0 ? 1 : -1;
           for (let c = orig.col + step; step > 0 ? c <= target.col : c >= target.col; c += step) {
             const shifted = shiftCellText(sourceCell.raw, c - orig.col, 0);
-            setCellRaw(sheet, toAddress(c, orig.row), shifted);
+            setCellRaw(sheet, toAddress(c, orig.row), shifted, allSheets, sheetIndex);
           }
         }
 
@@ -174,14 +176,14 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
         const value = editingInBar
           ? barInputRef.current?.value ?? editValue
           : inputRef.current?.value ?? editValue;
-        setCellRaw(sheet, editingAddr, value);
+        setCellRaw(sheet, editingAddr, value, allSheets, sheetIndex);
         stopEditing();
         onSheetChange();
       }
       setSelectedAddr(addr);
       setSelAnchor(null); // clear multi-selection on click
     },
-    [editingAddr, sheet, onSheetChange]
+    [editingAddr, sheet, allSheets, sheetIndex, onSheetChange]
   );
 
   const handleCellDoubleClick = useCallback(
@@ -194,11 +196,11 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
 
   const commitEdit = useCallback(
     (addr: CellAddress, value: string) => {
-      setCellRaw(sheet, addr, value);
+      setCellRaw(sheet, addr, value, allSheets, sheetIndex);
       stopEditing();
       onSheetChange();
     },
-    [sheet, onSheetChange]
+    [sheet, allSheets, sheetIndex, onSheetChange]
   );
 
   const handleKeyDown = useCallback(
@@ -287,11 +289,11 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
         if (bounds) {
           for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
             for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
-              setCellRaw(sheet, toAddress(c, r), "");
+              setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex);
             }
           }
         } else {
-          setCellRaw(sheet, selectedAddr, "");
+          setCellRaw(sheet, selectedAddr, "", allSheets, sheetIndex);
         }
         setSelAnchor(null);
         onSheetChange();
@@ -299,13 +301,13 @@ export function Grid({ sheet, onSheetChange, onShowHelp }: GridProps) {
       }
       // Shift+R: full recalculate everything
       if (e.key === "R" && e.shiftKey) {
-        recalculate(sheet);
+        recalculateAll(allSheets);
         onSheetChange();
         e.preventDefault();
       }
       // r: recalculate current cell and dependents
       if (e.key === "r" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        recalculateFrom(sheet, [selectedAddr]);
+        recalculateAllFrom(allSheets, sheetIndex, [selectedAddr]);
         onSheetChange();
         e.preventDefault();
       }

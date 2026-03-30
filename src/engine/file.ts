@@ -1,6 +1,6 @@
 import type { Sheet, CellAddress } from "./types";
 import { parseCell } from "./parser";
-import { recalculateBulk, createSheet } from "./evaluate";
+import { recalculateAllBulk, createSheet } from "./evaluate";
 
 /** On-disk format */
 export interface FileFormat {
@@ -42,17 +42,30 @@ export function deserializeFile(file: FileFormat): { name: string; sheets: Sheet
     return { name: fileName, sheets: [createSheet(numSamples)] };
   }
 
+  // Deduplicate sheet names: first occurrence keeps its name, duplicates get renamed
+  const usedNames = new Set<string>();
+  let nextNum = 1;
   const sheets = file.sheets.map((sheetData) => {
-    const sheet = createSheet(numSamples, sheetData.name || "Untitled sheet");
+    let name = sheetData.name || "Untitled sheet";
+    if (usedNames.has(name)) {
+      // Find a unique name
+      while (usedNames.has(`Untitled sheet ${nextNum}`)) nextNum++;
+      name = `Untitled sheet ${nextNum}`;
+      nextNum++;
+    }
+    usedNames.add(name);
+    const sheet = createSheet(numSamples, name);
 
     for (const [addr, raw] of Object.entries(sheetData.cells)) {
       const { content, variableName, labelVar } = parseCell(raw);
       sheet.cells.set(addr as CellAddress, { raw, content, variableName, labelVar });
     }
 
-    recalculateBulk(sheet);
     return sheet;
   });
+
+  // Bulk recalculate all sheets together for cross-sheet references
+  recalculateAllBulk(sheets);
 
   return { name: fileName, sheets };
 }

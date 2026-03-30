@@ -137,8 +137,10 @@ function parseDistribution(s: string): Distribution | null {
 type Token =
   | { type: "number"; value: number }
   | { type: "cellRef"; col: number; row: number; pinCol: boolean; pinRow: boolean }
-  | { type: "ident"; name: string }
+  | { type: "ident"; name: string; original: string }
+  | { type: "quotedName"; name: string }
   | { type: "op"; value: string }
+  | { type: "dot" }
   | { type: "lparen" }
   | { type: "rparen" }
   | { type: "comma" };
@@ -154,8 +156,21 @@ function tokenize(input: string): Token[] {
       continue;
     }
 
-    // Number (including decimals)
-    if (/[0-9.]/.test(input[i])) {
+    // Quoted sheet name: 'Sheet Name'
+    if (input[i] === "'") {
+      i++; // skip opening quote
+      let name = "";
+      while (i < input.length && input[i] !== "'") {
+        name += input[i++];
+      }
+      if (i >= input.length) throw new Error("Unterminated quoted name");
+      i++; // skip closing quote
+      tokens.push({ type: "quotedName", name });
+      continue;
+    }
+
+    // Number (including decimals, but '.' alone is a dot operator)
+    if (/[0-9]/.test(input[i]) || (input[i] === "." && i + 1 < input.length && /[0-9]/.test(input[i + 1]))) {
       let num = "";
       while (i < input.length && /[0-9.eE]/.test(input[i])) {
         num += input[i++];
@@ -196,7 +211,7 @@ function tokenize(input: string): Token[] {
         while (i < input.length && /[a-zA-Z0-9_]/.test(input[i])) {
           word += input[i++];
         }
-        tokens.push({ type: "ident", name: word.toLowerCase() });
+        tokens.push({ type: "ident", name: word.toLowerCase(), original: word });
         continue;
       }
 
@@ -207,6 +222,11 @@ function tokenize(input: string): Token[] {
     // Operators and punctuation
     if ("+-*/".includes(input[i])) {
       tokens.push({ type: "op", value: input[i++] });
+      continue;
+    }
+    if (input[i] === ".") {
+      tokens.push({ type: "dot" });
+      i++;
       continue;
     }
     if (input[i] === "(") {
@@ -279,7 +299,28 @@ class Parser {
     return this.parsePrimary();
   }
 
-  /** primary = number | cellRef | ident '(' args ')' | ident | '(' expr ')' */
+  /** Parse the ref after a dot in a cross-sheet reference */
+  private parseSheetRef(sheetName: string): Expr {
+    const next = this.peek();
+    if (next?.type === "cellRef") {
+      this.advance();
+      return {
+        type: "sheetCellRef",
+        sheet: sheetName,
+        col: next.col,
+        row: next.row,
+        ...(next.pinCol ? { pinCol: true } : {}),
+        ...(next.pinRow ? { pinRow: true } : {}),
+      };
+    }
+    if (next?.type === "ident") {
+      this.advance();
+      return { type: "sheetVarRef", sheet: sheetName, name: next.name };
+    }
+    throw new Error(`Expected cell reference or variable after '${sheetName}.'`);
+  }
+
+  /** primary = number | cellRef | quotedName '.' ref | ident '.' ref | ident '(' args ')' | ident | '(' expr ')' */
   private parsePrimary(): Expr {
     const tok = this.peek();
     if (!tok) throw new Error("Unexpected end of expression");
@@ -300,8 +341,23 @@ class Parser {
       };
     }
 
+    // Quoted sheet name: 'Sheet Name'.ref
+    if (tok.type === "quotedName") {
+      this.advance();
+      if (this.peek()?.type !== "dot") {
+        throw new Error(`Expected '.' after '${tok.name}'`);
+      }
+      this.advance(); // consume dot
+      return this.parseSheetRef(tok.name);
+    }
+
     if (tok.type === "ident") {
       this.advance();
+      // Cross-sheet reference: ident.ref
+      if (this.peek()?.type === "dot") {
+        this.advance(); // consume dot
+        return this.parseSheetRef(tok.original);
+      }
       // Function call?
       if (this.peek()?.type === "lparen") {
         this.advance(); // consume '('

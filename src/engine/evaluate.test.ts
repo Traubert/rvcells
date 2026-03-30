@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSheet, setCellRaw, summarize, recalculateBulk } from "./evaluate";
+import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet } from "./evaluate";
 import type { Sheet } from "./types";
 import { parseCell } from "./parser";
 
@@ -613,6 +613,104 @@ describe("resample", () => {
       if (b.values[i] !== c.values[i]) { same = false; break; }
     }
     expect(same).toBe(false);
+  });
+});
+
+describe("cross-sheet references", () => {
+  /** Helper: create multiple named sheets and set cells */
+  function makeSheets(defs: { name: string; cells: Record<string, string> }[]): Sheet[] {
+    const sheets = defs.map((d) => createSheet(1_000, d.name));
+    // First set all cells without cross-sheet eval
+    for (let si = 0; si < defs.length; si++) {
+      for (const [addr, raw] of Object.entries(defs[si].cells)) {
+        const { content, variableName, labelVar } = parseCell(raw);
+        sheets[si].cells.set(addr, { raw, content, variableName, labelVar });
+      }
+    }
+    recalculateAllBulk(sheets);
+    return sheets;
+  }
+
+  it("references a cell in another sheet by name", () => {
+    const sheets = makeSheets([
+      { name: "Data", cells: { A1: "42" } },
+      { name: "Main", cells: { A1: "= Data.A1 + 1" } },
+    ]);
+    const cell = sheets[1].cells.get("A1")!;
+    expect(cell.error).toBeFalsy();
+    expect(cell.result?.kind).toBe("scalar");
+    if (cell.result?.kind === "scalar") expect(cell.result.value).toBe(43);
+  });
+
+  it("references a variable in another sheet", () => {
+    const sheets = makeSheets([
+      { name: "Data", cells: { A1: "income = 5000" } },
+      { name: "Main", cells: { A1: "= Data.income * 12" } },
+    ]);
+    const cell = sheets[1].cells.get("A1")!;
+    expect(cell.error).toBeFalsy();
+    expect(cell.result?.kind).toBe("scalar");
+    if (cell.result?.kind === "scalar") expect(cell.result.value).toBe(60000);
+  });
+
+  it("errors on unknown sheet name", () => {
+    const sheets = makeSheets([
+      { name: "Main", cells: { A1: "= NoSuchSheet.A1" } },
+    ]);
+    expect(sheets[0].cells.get("A1")?.error).toMatch(/unknown sheet/i);
+  });
+
+  it("errors on unknown variable in target sheet", () => {
+    const sheets = makeSheets([
+      { name: "Data", cells: { A1: "42" } },
+      { name: "Main", cells: { A1: "= Data.novar" } },
+    ]);
+    expect(sheets[1].cells.get("A1")?.error).toMatch(/unknown variable/i);
+  });
+
+  it("incremental recalc propagates across sheets", () => {
+    const sheets = makeSheets([
+      { name: "Data", cells: { A1: "10" } },
+      { name: "Main", cells: { A1: "= Data.A1 * 2" } },
+    ]);
+    expect(sheets[1].cells.get("A1")?.result).toEqual({ kind: "scalar", value: 20 });
+    // Edit cell in Data sheet
+    setCellRaw(sheets[0], "A1", "25", sheets, 0);
+    expect(sheets[1].cells.get("A1")?.result).toEqual({ kind: "scalar", value: 50 });
+  });
+
+  it("rename updates cross-sheet references", () => {
+    const sheets = makeSheets([
+      { name: "Data", cells: { A1: "100" } },
+      { name: "Main", cells: { A1: "= Data.A1 + 1" } },
+    ]);
+    renameSheet(sheets, 0, "Inputs");
+    // Raw should be updated
+    expect(sheets[1].cells.get("A1")?.raw).toContain("Inputs");
+    // Result should still work
+    const cell = sheets[1].cells.get("A1")!;
+    expect(cell.error).toBeFalsy();
+    expect(cell.result).toEqual({ kind: "scalar", value: 101 });
+  });
+
+  it("findRefsToSheet finds cross-sheet references", () => {
+    const sheets = makeSheets([
+      { name: "Data", cells: { A1: "42" } },
+      { name: "Main", cells: { A1: "= Data.A1", B1: "= A1 + 1" } },
+    ]);
+    const refs = findRefsToSheet(sheets, "Data");
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ sheetIndex: 1, addr: "A1" });
+  });
+
+  it("quoted sheet name works", () => {
+    const sheets = makeSheets([
+      { name: "My Data", cells: { A1: "99" } },
+      { name: "Main", cells: { A1: "= 'My Data'.A1" } },
+    ]);
+    const cell = sheets[1].cells.get("A1")!;
+    expect(cell.error).toBeFalsy();
+    expect(cell.result).toEqual({ kind: "scalar", value: 99 });
   });
 });
 
