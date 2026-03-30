@@ -257,6 +257,35 @@ describe("variables", () => {
     const sheet = makeSheet({ A1: "= unknown_var + 1" });
     expect(sheet.cells.get("A1")?.error).toMatch(/unknown variable/i);
   });
+
+  it("duplicate variable name at edit time is an error", () => {
+    const sheet = makeSheet({ A1: "x = 10" });
+    const cell = setCellRaw(sheet, "B1", "x = 20");
+    expect(cell?.error).toMatch(/duplicate variable/i);
+    // Original keeps its value
+    expect(scalarValue(sheet, "A1")).toBe(10);
+  });
+
+  it("duplicate variable does not overwrite original in formulas", () => {
+    const sheet = makeSheet({
+      A1: "x = 10",
+      C1: "= x + 1",
+    });
+    setCellRaw(sheet, "B1", "x = 99");
+    // C1 should still use A1's definition
+    expect(scalarValue(sheet, "C1")).toBe(11);
+  });
+
+  it("removing original variable clears duplicate error", () => {
+    const sheet = makeSheet({ A1: "x = 10" });
+    setCellRaw(sheet, "B1", "x = 20");
+    expect(sheet.cells.get("B1")?.error).toMatch(/duplicate/i);
+    // Remove the original
+    setCellRaw(sheet, "A1", "");
+    // B1 should now be valid
+    expect(sheet.cells.get("B1")?.error).toBeFalsy();
+    expect(scalarValue(sheet, "B1")).toBe(20);
+  });
 });
 
 describe("label variables (:=)", () => {
@@ -333,6 +362,43 @@ describe("label variables (:=)", () => {
     expect(sheet.cells.get("B1")?.variableName).toBe("income");
     setCellRaw(sheet, "A1", "");
     expect(sheet.cells.get("B1")?.variableName).toBeUndefined();
+  });
+
+  it("duplicate label variable is an error", () => {
+    const sheet = makeSheet({
+      A1: "Cost",
+      B1: ":= 100",
+    });
+    // Now add another label var with the same resolved name
+    setCellRaw(sheet, "A2", "Cost");
+    setCellRaw(sheet, "B2", ":= 200");
+    expect(sheet.cells.get("B2")?.error).toMatch(/duplicate variable/i);
+    expect(scalarValue(sheet, "B1")).toBe(100);
+  });
+});
+
+describe("duplicate variables in bulk load", () => {
+  it("first definition wins, second gets error", () => {
+    const sheet = createSheet(100);
+    // Manually set cells and use recalculateBulk (simulates file load)
+    const cell1 = parseCell("x = 10");
+    sheet.cells.set("A1", { raw: "x = 10", ...cell1 });
+    const cell2 = parseCell("x = 20");
+    sheet.cells.set("B1", { raw: "x = 20", ...cell2 });
+    const cell3 = parseCell("= x + 1");
+    sheet.cells.set("C1", { raw: "= x + 1", ...cell3 });
+    recalculateBulk(sheet);
+
+    // First definition (A1) wins
+    expect(sheet.cells.get("A1")?.error).toBeFalsy();
+    expect(sheet.cells.get("A1")?.result).toBeTruthy();
+    // Second definition (B1) gets duplicate error
+    expect(sheet.cells.get("B1")?.error).toMatch(/duplicate variable/i);
+    // Formula uses the first definition
+    const c1 = sheet.cells.get("C1")!;
+    expect(c1.error).toBeFalsy();
+    expect(c1.result?.kind).toBe("scalar");
+    if (c1.result?.kind === "scalar") expect(c1.result.value).toBe(11);
   });
 });
 

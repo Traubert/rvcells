@@ -64,16 +64,35 @@ function resolveLabelVars(cells: Map<CellAddress, Cell>): void {
   }
 }
 
-/** Build a map from variable name → cell address */
-function buildVarMap(cells: Map<CellAddress, Cell>): Map<string, CellAddress> {
+/** Build a map from variable name → cell address.
+ *  First definition wins; subsequent duplicates get marked with errors.
+ *  Returns the varMap and the set of duplicate cell addresses. */
+function buildVarMap(cells: Map<CellAddress, Cell>): { varMap: Map<string, CellAddress>; dupAddrs: Set<CellAddress>; clearedAddrs: CellAddress[] } {
   resolveLabelVars(cells);
-  const varMap = new Map<string, CellAddress>();
+  // Clear previous duplicate errors so they can be re-evaluated
+  const clearedAddrs: CellAddress[] = [];
   for (const [addr, cell] of cells) {
-    if (cell.variableName) {
-      varMap.set(cell.variableName, addr);
+    if (cell.variableName && cell.error?.startsWith("Duplicate variable")) {
+      cell.error = undefined;
+      clearedAddrs.push(addr);
     }
   }
-  return varMap;
+  const varMap = new Map<string, CellAddress>();
+  const dupAddrs = new Set<CellAddress>();
+  for (const [addr, cell] of cells) {
+    if (cell.variableName) {
+      const existing = varMap.get(cell.variableName);
+      if (existing) {
+        cell.error = `Duplicate variable "${cell.variableName}" (already defined in ${existing})`;
+        cell.result = undefined;
+        dupAddrs.add(addr);
+      } else {
+        varMap.set(cell.variableName, addr);
+      }
+    }
+  }
+  // Only report cleared addrs that are truly cleared (not re-marked as duplicate)
+  return { varMap, dupAddrs, clearedAddrs: clearedAddrs.filter(a => !dupAddrs.has(a)) };
 }
 
 /** Get all direct dependencies of a cell as cell addresses */
@@ -596,7 +615,7 @@ function topoSortWithCycles(
  * Marks cells in cycles with errors, evaluates everything else.
  */
 export function recalculateBulk(sheet: Sheet): void {
-  const varMap = buildVarMap(sheet.cells);
+  const { varMap, dupAddrs } = buildVarMap(sheet.cells);
   const { order, cycleAddrs } = topoSortWithCycles(sheet.cells, varMap);
   const results = new Map<CellAddress, CellResult>();
 
@@ -609,8 +628,9 @@ export function recalculateBulk(sheet: Sheet): void {
     }
   }
 
-  // Evaluate non-cycle cells in topological order
+  // Evaluate non-cycle cells in topological order (skip duplicates)
   for (const addr of order) {
+    if (dupAddrs.has(addr)) continue;
     const cell = sheet.cells.get(addr)!;
     evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
   }
@@ -618,11 +638,12 @@ export function recalculateBulk(sheet: Sheet): void {
 
 /** Recalculate the entire sheet from scratch. */
 export function recalculate(sheet: Sheet): void {
-  const varMap = buildVarMap(sheet.cells);
+  const { varMap, dupAddrs } = buildVarMap(sheet.cells);
   const order = topoSort(sheet.cells, varMap);
   const results = new Map<CellAddress, CellResult>();
 
   for (const addr of order) {
+    if (dupAddrs.has(addr)) continue;
     const cell = sheet.cells.get(addr)!;
     evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
   }
@@ -633,9 +654,9 @@ export function recalculate(sheet: Sheet): void {
  * their downstream dependents. Other cells keep their existing results.
  */
 export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[]): void {
-  const varMap = buildVarMap(sheet.cells);
+  const { varMap, dupAddrs, clearedAddrs } = buildVarMap(sheet.cells);
   const reverseDeps = buildReverseDeps(sheet.cells, varMap);
-  const dirty = collectDirty(changedAddrs, reverseDeps);
+  const dirty = collectDirty([...changedAddrs, ...clearedAddrs], reverseDeps);
 
   // We need the full topological order to know *which order* to eval the dirty cells
   const fullOrder = topoSort(sheet.cells, varMap);
@@ -648,9 +669,10 @@ export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[]): void
     }
   }
 
-  // Re-evaluate only dirty cells, in topological order
+  // Re-evaluate only dirty cells, in topological order (skip duplicates)
   for (const addr of fullOrder) {
     if (!dirty.has(addr)) continue;
+    if (dupAddrs.has(addr)) continue;
     const cell = sheet.cells.get(addr)!;
     evalCell(addr, cell, results, varMap, sheet.numSamples, sheet.cells);
   }
@@ -684,7 +706,7 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
     // Temporarily put the new cell in so we can compute its deps
     const prev = sheet.cells.get(addr);
     sheet.cells.set(addr, cell);
-    const varMap = buildVarMap(sheet.cells);
+    const { varMap } = buildVarMap(sheet.cells);
     const deps = cellDeps(cell, varMap);
 
     if (wouldCycle(addr, deps, sheet.cells, varMap)) {
