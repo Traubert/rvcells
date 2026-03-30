@@ -111,8 +111,101 @@
   border-radius: 0 0 4px 4px;
 }
 
-/* Sheet name */
-.sheet-name {
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  background: #0e1525;
+  border-bottom: 1px solid var(--border);
+  padding: 0 4px;
+  min-height: 30px;
+  gap: 1px;
+  overflow-x: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tab-active {
+  color: var(--text-bright);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.tab-name {
+  padding: 6px 0;
+}
+
+.tab-name-input {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-bright);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  padding: 2px 4px;
+  width: 120px;
+  outline: none;
+}
+
+.tab-close {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 0 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.tab:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.tab-add {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  padding: 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.tab-add:hover {
+  color: var(--text-bright);
+}
+
+/* File name in title bar */
+.file-name {
   font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 15px;
   color: var(--text-bright);
@@ -125,6 +218,16 @@
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+}
+
+.file-name:hover {
+  border-color: var(--border);
+}
+
+.file-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: rgba(0, 0, 0, 0.2);
 }
 
 /* Dialog */
@@ -317,16 +420,6 @@
   color: var(--distribution);
 }
 
-
-.sheet-name:hover {
-  border-color: var(--border);
-}
-
-.sheet-name:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: rgba(0, 0, 0, 0.2);
-}
 
 /* Formula bar */
 .formula-bar {

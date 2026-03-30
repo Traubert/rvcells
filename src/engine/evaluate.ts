@@ -758,7 +758,7 @@ export function setCellRaw(sheet: Sheet, addr: CellAddress, raw: string): Cell |
 }
 
 /** Create an empty sheet */
-export function createSheet(numSamples = 10_000, name = "Untitled table"): Sheet {
+export function createSheet(numSamples = 10_000, name = "Untitled sheet"): Sheet {
   return { name, cells: new Map(), numSamples };
 }
 

@@ -5,7 +5,7 @@ import { recalculateBulk, createSheet } from "./evaluate";
 /** On-disk format */
 export interface FileFormat {
   version: number;
-  name: string;
+  name?: string; // v1 compat: workbook-level name
   settings: {
     numSamples: number;
   };
@@ -15,57 +15,63 @@ export interface FileFormat {
   }>;
 }
 
-/** Serialize a sheet to a saveable JSON object */
-export function serializeFile(sheet: Sheet): FileFormat {
-  const cells: Record<string, string> = {};
-  for (const [addr, cell] of sheet.cells) {
-    cells[addr] = cell.raw;
-  }
+/** Serialize multiple sheets to a saveable JSON object */
+export function serializeFile(sheets: Sheet[], name: string): FileFormat {
   return {
-    version: 1,
-    name: sheet.name,
+    version: 2,
+    name,
     settings: {
-      numSamples: sheet.numSamples,
+      numSamples: sheets[0]?.numSamples ?? 10_000,
     },
-    sheets: [{ name: "Sheet 1", cells }],
+    sheets: sheets.map((sheet) => {
+      const cells: Record<string, string> = {};
+      for (const [addr, cell] of sheet.cells) {
+        cells[addr] = cell.raw;
+      }
+      return { name: sheet.name, cells };
+    }),
   };
 }
 
-/** Deserialize a file into a sheet. Parses all cells and runs bulk recalculation
- *  (with cycle detection that marks all cycle participants). */
-export function deserializeFile(file: FileFormat): Sheet {
-  const sheetData = file.sheets[0];
-  if (!sheetData) return createSheet(file.settings?.numSamples ?? 10_000, file.name ?? "Untitled table");
+/** Deserialize a file into a name and array of sheets. */
+export function deserializeFile(file: FileFormat): { name: string; sheets: Sheet[] } {
+  const numSamples = file.settings?.numSamples ?? 10_000;
+  const fileName = file.name || "Untitled file";
 
-  const sheet = createSheet(file.settings?.numSamples ?? 10_000, file.name ?? "Untitled table");
-
-  // Parse all cells
-  for (const [addr, raw] of Object.entries(sheetData.cells)) {
-    const { content, variableName } = parseCell(raw);
-    sheet.cells.set(addr as CellAddress, { raw, content, variableName });
+  if (!file.sheets?.length) {
+    return { name: fileName, sheets: [createSheet(numSamples)] };
   }
 
-  // Bulk recalculate with cycle detection
-  recalculateBulk(sheet);
+  const sheets = file.sheets.map((sheetData) => {
+    const sheet = createSheet(numSamples, sheetData.name || "Untitled sheet");
 
-  return sheet;
+    for (const [addr, raw] of Object.entries(sheetData.cells)) {
+      const { content, variableName, labelVar } = parseCell(raw);
+      sheet.cells.set(addr as CellAddress, { raw, content, variableName, labelVar });
+    }
+
+    recalculateBulk(sheet);
+    return sheet;
+  });
+
+  return { name: fileName, sheets };
 }
 
-/** Save a sheet as a JSON file download */
-export function saveToFile(sheet: Sheet): void {
-  const data = serializeFile(sheet);
+/** Save sheets as a JSON file download */
+export function saveToFile(sheets: Sheet[], name: string): void {
+  const data = serializeFile(sheets, name);
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = sheet.name + ".json";
+  a.download = name + ".json";
   a.click();
   URL.revokeObjectURL(url);
 }
 
-/** Open a file picker and load a sheet. Returns null if user cancels. */
-export function openFromFile(): Promise<Sheet | null> {
+/** Open a file picker and load sheets. Returns null if user cancels. */
+export function openFromFile(): Promise<{ name: string; sheets: Sheet[] } | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -79,7 +85,7 @@ export function openFromFile(): Promise<Sheet | null> {
       try {
         const text = await file.text();
         const data = JSON.parse(text) as FileFormat;
-        if (data.version !== 1 || !Array.isArray(data.sheets)) {
+        if ((data.version !== 1 && data.version !== 2) || !Array.isArray(data.sheets)) {
           throw new Error("Invalid file format");
         }
         resolve(deserializeFile(data));
