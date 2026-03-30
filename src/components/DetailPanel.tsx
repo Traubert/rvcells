@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import type { Cell, Sheet } from "../engine/types";
 import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, resolveReference } from "../engine/evaluate";
 import { formatNumber } from "../format";
@@ -6,6 +6,51 @@ import { formatNumber } from "../format";
 export interface LockedRange {
   min: number;
   max: number;
+}
+
+/** Returns onMouseDown / onMouseUp / onMouseLeave handlers for a button that
+ *  fires once on click, then auto-repeats with accelerating speed while held.
+ *  Rapid discrete clicks (< 1s apart) also accelerate: the nth click applies
+ *  a step of n². */
+function useRepeatAction(action: (step: number) => void) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delayRef = useRef(250);
+  // rapid-click tracking
+  const clickCountRef = useRef(0);
+  const lastClickRef = useRef(0);
+
+  const stop = useCallback(() => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const tick = useCallback(() => {
+    action(1);
+    delayRef.current = Math.max(30, delayRef.current * 0.82);
+    timerRef.current = setTimeout(tick, delayRef.current);
+  }, [action]);
+
+  const start = useCallback(() => {
+    // rapid-click acceleration
+    const now = Date.now();
+    if (now - lastClickRef.current < 1000) {
+      clickCountRef.current++;
+    } else {
+      clickCountRef.current = 1;
+    }
+    lastClickRef.current = now;
+    const n = clickCountRef.current;
+    action(n * n);
+    // begin hold-repeat
+    delayRef.current = 250;
+    timerRef.current = setTimeout(tick, delayRef.current);
+  }, [action, tick]);
+
+  useEffect(() => stop, [stop]);
+
+  return { onMouseDown: start, onMouseUp: stop, onMouseLeave: stop };
 }
 
 type DetailTab = "distribution" | "correlation" | "variance" | "tornado";
@@ -29,15 +74,16 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   const [compareRef, setCompareRef] = useState<string>(""); // committed reference
   const [compareError, setCompareError] = useState(false);
   const compareInputRef = useRef<HTMLInputElement>(null);
+  const [binCount, setBinCount] = useState(60);
 
   const stats = useMemo(() => summarize(result), [result]);
-  const autoHist = useMemo(() => histogram(result, 60), [result]);
+  const autoHist = useMemo(() => histogram(result, binCount), [result, binCount]);
   const hist = useMemo(
     () =>
       lockedRange
-        ? histogram(result, 60, lockedRange.min, lockedRange.max)
+        ? histogram(result, binCount, lockedRange.min, lockedRange.max)
         : autoHist,
-    [result, lockedRange, autoHist]
+    [result, lockedRange, autoHist, binCount]
   );
 
   // Compare distribution
@@ -54,15 +100,20 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   const compareHist = useMemo(
     () => {
       if (!compareResult) return null;
-      if (lockedRange) return histogram(compareResult, 60, lockedRange.min, lockedRange.max);
-      return histogram(compareResult, 60, autoHist.min, autoHist.max);
+      if (lockedRange) return histogram(compareResult, binCount, lockedRange.min, lockedRange.max);
+      return histogram(compareResult, binCount, autoHist.min, autoHist.max);
     },
-    [compareResult, lockedRange, autoHist]
+    [compareResult, lockedRange, autoHist, binCount]
   );
 
   const maxBin = Math.max(...hist.bins, ...(compareHist?.bins ?? []));
   const [guideMode, setGuideMode] = useState<GuideMode>("none");
   const [rangeUnit, setRangeUnit] = useState<"value" | "sigma" | "percentile">("value");
+
+  const fewerBins = useCallback((step: number) => setBinCount(c => Math.max(5, c - step)), []);
+  const moreBins = useCallback((step: number) => setBinCount(c => Math.min(250, c + step)), []);
+  const fewerBinsRepeat = useRepeatAction(fewerBins);
+  const moreBinsRepeat = useRepeatAction(moreBins);
 
   function cycleGuideMode() {
     setGuideMode((m) => m === "none" ? "sigma" : m === "sigma" ? "percentiles" : "none");
@@ -205,7 +256,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
               className={`detail-tab ${activeTab === "distribution" ? "detail-tab-active" : ""}`}
               onClick={() => setActiveTab("distribution")}
             >
-              Distribution
+              Histogram
             </button>
             <button
               className={`detail-tab ${activeTab === "correlation" ? "detail-tab-active" : ""}`}
@@ -258,11 +309,24 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
           )}
 
           <div className="detail-chart">
-            <Histogram hist={hist} maxBin={maxBin} stats={stats} guideMode={guideMode} compareHist={compareHist} />
+            <Histogram hist={hist} maxBin={maxBin} stats={stats} guideMode={guideMode} compareHist={compareHist} result={result} />
           </div>
 
           <div className="detail-controls">
             <button className="hist-guide-toggle" onClick={cycleGuideMode}>{guideModeLabel}</button>
+            <div className="bin-count-controls">
+              <button
+                className="range-button"
+                {...fewerBinsRepeat}
+                title="Fewer bins"
+              >−</button>
+              <span className="bin-count-label">Bins: {binCount}</span>
+              <button
+                className="range-button"
+                {...moreBinsRepeat}
+                title="More bins"
+              >+</button>
+            </div>
             <div className="detail-range-controls">
               <div className="lock-range-row">
                 <label className="lock-range-label">
@@ -691,31 +755,40 @@ function getGuideLines(mode: GuideMode, stats: { mean: number; std: number; p5: 
   return [];
 }
 
-function Histogram({ hist, maxBin, stats, guideMode, compareHist }: {
+function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
   hist: { min: number; max: number; bins: number[]; binWidth: number };
   maxBin: number;
   stats: { mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number };
   guideMode: GuideMode;
   compareHist?: { min: number; max: number; bins: number[]; binWidth: number } | null;
+  result: import("../engine/types").CellResult;
 }) {
   const [hoverBin, setHoverBin] = useState<number | null>(null);
+  const [hoverXPct, setHoverXPct] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const totalSamples = useMemo(() => hist.bins.reduce((a, b) => a + b, 0), [hist.bins]);
+
+  // Pre-sort samples for fast cumulative lookup
+  const sortedSamples = useMemo(() => {
+    if (result.kind !== "samples") return null;
+    return new Float64Array(result.values).sort();
+  }, [result]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const bin = Math.floor(x * hist.bins.length);
+    const xFrac = (e.clientX - rect.left) / rect.width;
+    const bin = Math.floor(xFrac * hist.bins.length);
     if (bin >= 0 && bin < hist.bins.length) {
       setHoverBin(bin);
     } else {
       setHoverBin(null);
     }
+    setHoverXPct(Math.max(0, Math.min(100, xFrac * 100)));
   }, [hist.bins.length]);
 
-  const handleMouseLeave = useCallback(() => setHoverBin(null), []);
+  const handleMouseLeave = useCallback(() => { setHoverBin(null); setHoverXPct(null); }, []);
 
   const compareTotalSamples = useMemo(
     () => compareHist ? compareHist.bins.reduce((a, b) => a + b, 0) : 0,
@@ -775,6 +848,32 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist }: {
             </div>
           );
         })}
+        {guideMode !== "none" && hoverXPct !== null && sortedSamples && range > 0 && (() => {
+          const hoverValue = hist.min + (hoverXPct / 100) * range;
+          let leftLabel: string, rightLabel: string;
+          if (guideMode === "sigma") {
+            const sigma = stats.std > 0 ? (hoverValue - stats.mean) / stats.std : 0;
+            leftLabel = "";
+            rightLabel = (sigma >= 0 ? "+" : "") + sigma.toFixed(2) + "σ";
+          } else {
+            // Binary search for cumulative %
+            let lo = 0, hi = sortedSamples.length;
+            while (lo < hi) {
+              const mid = (lo + hi) >> 1;
+              if (sortedSamples[mid] <= hoverValue) lo = mid + 1; else hi = mid;
+            }
+            const leftPct = (lo / sortedSamples.length) * 100;
+            const rightPct = 100 - leftPct;
+            leftLabel = leftPct.toFixed(1) + "%";
+            rightLabel = rightPct.toFixed(1) + "%";
+          }
+          return (
+            <div className="hist-guideline hist-cursor-guide" style={{ left: `${hoverXPct}%` }}>
+              <span className="hist-cursor-left">{leftLabel}</span>
+              <span className="hist-cursor-right">{rightLabel}</span>
+            </div>
+          );
+        })()}
       </div>
       <div className="hist-axis">
         <span>{formatNumber(hist.min)}</span>

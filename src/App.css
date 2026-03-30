@@ -730,6 +730,30 @@ thead .row-header {
   white-space: nowrap;
 }
 
+.hist-cursor-guide {
+  border-left: 1px solid rgba(200, 200, 220, 0.6);
+}
+
+.hist-cursor-left,
+.hist-cursor-right {
+  position: absolute;
+  top: 2px;
+  font-size: 10px;
+  color: rgba(220, 220, 230, 0.95);
+  white-space: nowrap;
+  background: rgba(30, 30, 40, 0.85);
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.hist-cursor-left {
+  right: 4px;
+}
+
+.hist-cursor-right {
+  left: 4px;
+}
+
 .hist-guide-toggle {
   font-family: var(--font-ui);
   font-size: 11px;
@@ -759,6 +783,20 @@ thead .row-header {
   flex-direction: column;
   gap: 8px;
   min-width: 100px;
+}
+
+.bin-count-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.bin-count-label {
+  font-family: var(--font-ui);
+  color: var(--text-dim);
+  min-width: 52px;
+  text-align: center;
 }
 
 .detail-range-controls {
