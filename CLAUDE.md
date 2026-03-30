@@ -42,7 +42,7 @@ A cell can optionally define a **named variable** by prefixing the content with 
 The dependency graph is a DAG evaluated in topological order across all sheets (global topo sort). Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents (including cross-sheet) are re-evaluated. Duplicate variable names are detected and errored (first definition wins).
 
 ### Display
-Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, teal = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells.
+Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, warm orange → red = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells.
 
 ## Feature List (prototype)
 
@@ -63,9 +63,9 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Incremental recalculation (only dirty cells and dependents)
 - [x] Histogram hover showing per-bin percentage
 - [x] Lockable histogram range with zoom +/− and recentre controls
-- [x] Uncertainty-based cell coloring (CV → white-to-teal interpolation)
+- [x] Uncertainty-based cell coloring (CV → white-to-orange-to-red interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
-- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+R recalc, Ctrl+Shift+R full recalc, Escape deselect
+- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+H help
 - [x] Settings dialog (global sample count)
 - [x] Help dialog (two pages: basics and functions)
 - [x] File naming (editable in header, used as export filename)
