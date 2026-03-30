@@ -79,6 +79,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete
 - [x] Histogram guidelines (σ and percentile modes)
 - [x] Range unit selector (value, σ, percentile) for locked range
+- [x] Distribution comparison: overlay another cell's histogram (orange) with side-by-side stats
 
 ### P1 — analysis
 - [x] Correlation tab: Spearman rank correlation of each distribution input with the output

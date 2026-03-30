@@ -989,6 +989,61 @@ export function setCellRaw(
   return cell;
 }
 
+/**
+ * Resolve a reference string (cell address, variable name, or Sheet.ref) to a Cell.
+ * Returns { cell, sheetIndex, addr } or null if not found.
+ */
+export function resolveReference(
+  ref: string,
+  currentSheetIdx: number,
+  allSheets: Sheet[],
+): { cell: Cell; sheetIndex: number; addr: CellAddress } | null {
+  const trimmed = ref.trim();
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+
+  // Cross-sheet reference: Sheet.ref or 'Sheet'.ref
+  const dotMatch = trimmed.match(/^(?:'([^']+)'|([a-zA-Z_]\w*))\.(.+)$/);
+  if (dotMatch) {
+    const sheetName = dotMatch[1] ?? dotMatch[2];
+    const rest = dotMatch[3];
+    const targetIdx = findSheetIndex(allSheets, sheetName);
+    if (targetIdx < 0) return null;
+
+    // Try as cell address
+    const parsed = parseAddress(rest.toUpperCase());
+    if (parsed) {
+      const addr = toAddress(parsed.col, parsed.row);
+      const cell = allSheets[targetIdx].cells.get(addr);
+      if (cell) return { cell, sheetIndex: targetIdx, addr };
+    }
+
+    // Try as variable
+    const varAddr = allVarMaps[targetIdx].get(rest.toLowerCase());
+    if (varAddr) {
+      const cell = allSheets[targetIdx].cells.get(varAddr);
+      if (cell) return { cell, sheetIndex: targetIdx, addr: varAddr };
+    }
+    return null;
+  }
+
+  // Local cell address (e.g. "A1", "B3")
+  const parsed = parseAddress(trimmed.toUpperCase());
+  if (parsed) {
+    const addr = toAddress(parsed.col, parsed.row);
+    const cell = allSheets[currentSheetIdx].cells.get(addr);
+    if (cell) return { cell, sheetIndex: currentSheetIdx, addr };
+  }
+
+  // Local variable name
+  const varAddr = allVarMaps[currentSheetIdx].get(trimmed.toLowerCase());
+  if (varAddr) {
+    const cell = allSheets[currentSheetIdx].cells.get(varAddr);
+    if (cell) return { cell, sheetIndex: currentSheetIdx, addr: varAddr };
+  }
+
+  return null;
+}
+
 /** Create an empty sheet */
 export function createSheet(numSamples = 10_000, name = "Untitled sheet"): Sheet {
   return { name, cells: new Map(), numSamples };

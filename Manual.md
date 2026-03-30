@@ -132,9 +132,15 @@ The detail panel only appears for distribution cells. Scalar cells don't have a 
 
 *TODO: Screenshot — the detail panel showing a distribution with σ guidelines active and the range locked*
 
+### Comparing distributions
+
+Click **Compare...** in the detail panel header and type a cell reference (e.g. `B3`), variable name (e.g. `income`), or cross-sheet reference (e.g. `Data.revenue`). The comparison distribution appears as an orange histogram overlay, and a second statistics panel appears next to the original for easy side-by-side reading. Hovering over a histogram bin shows percentages for both distributions.
+
+Click the "Comparing with ..." label to remove the comparison.
+
 ### Navigating with locked range
 
-A typical workflow for comparing distributions:
+Another workflow for comparing distributions:
 
 1. Click a distribution cell of interest
 2. Check "Lock range" — the current range is captured

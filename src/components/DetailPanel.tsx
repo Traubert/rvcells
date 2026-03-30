@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import type { Cell, Sheet } from "../engine/types";
-import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado } from "../engine/evaluate";
+import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, resolveReference } from "../engine/evaluate";
 import { formatNumber } from "../format";
 
 export interface LockedRange {
@@ -25,6 +25,10 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   if (!result) return null;
 
   const [activeTab, setActiveTab] = useState<DetailTab>("distribution");
+  const [compareInput, setCompareInput] = useState<string | null>(null); // null = input hidden
+  const [compareRef, setCompareRef] = useState<string>(""); // committed reference
+  const [compareError, setCompareError] = useState(false);
+  const compareInputRef = useRef<HTMLInputElement>(null);
 
   const stats = useMemo(() => summarize(result), [result]);
   const autoHist = useMemo(() => histogram(result, 60), [result]);
@@ -36,7 +40,27 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     [result, lockedRange, autoHist]
   );
 
-  const maxBin = Math.max(...hist.bins);
+  // Compare distribution
+  const compareResolved = useMemo(() => {
+    if (!compareRef) return null;
+    return resolveReference(compareRef, sheetIndex, allSheets);
+  }, [compareRef, sheetIndex, allSheets, result]); // result dep ensures refresh on recalc
+
+  const compareResult = compareResolved?.cell.result;
+  const compareStats = useMemo(
+    () => compareResult ? summarize(compareResult) : null,
+    [compareResult]
+  );
+  const compareHist = useMemo(
+    () => {
+      if (!compareResult) return null;
+      if (lockedRange) return histogram(compareResult, 60, lockedRange.min, lockedRange.max);
+      return histogram(compareResult, 60, autoHist.min, autoHist.max);
+    },
+    [compareResult, lockedRange, autoHist]
+  );
+
+  const maxBin = Math.max(...hist.bins, ...(compareHist?.bins ?? []));
   const [guideMode, setGuideMode] = useState<GuideMode>("none");
   const [rangeUnit, setRangeUnit] = useState<"value" | "sigma" | "percentile">("value");
 
@@ -124,6 +148,57 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
           <span className="detail-var">{cell.variableName}</span>
         )}
         <span className="detail-raw">{cell.raw}</span>
+        <div className="compare-controls">
+          {compareInput !== null ? (
+            <span className="compare-input-wrap">
+              <input
+                ref={compareInputRef}
+                className="compare-input"
+                value={compareInput}
+                placeholder="Cell or variable..."
+                onChange={(e) => setCompareInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const val = compareInput.trim();
+                    if (val && resolveReference(val, sheetIndex, allSheets)) {
+                      setCompareRef(val);
+                    } else if (val) {
+                      setCompareError(true);
+                      setTimeout(() => setCompareError(false), 2000);
+                    }
+                    setCompareInput(null);
+                    onReturnFocus();
+                  }
+                  if (e.key === "Escape") {
+                    setCompareInput(null);
+                    onReturnFocus();
+                  }
+                  e.stopPropagation();
+                }}
+                onBlur={() => setCompareInput(null)}
+                autoFocus
+              />
+            </span>
+          ) : compareRef ? (
+            <button
+              className="detail-tab compare-active"
+              onClick={() => { setCompareRef(""); }}
+              title="Click to remove comparison"
+            >
+              Comparing with <span className="compare-ref-name">{compareRef}</span> ×
+            </button>
+          ) : (
+            <>
+              <button
+                className="detail-tab"
+                onClick={() => { setCompareInput(""); setActiveTab("distribution"); }}
+              >
+                Compare...
+              </button>
+              {compareError && <span className="compare-error">Couldn't resolve reference</span>}
+            </>
+          )}
+        </div>
         {isFormula && (
           <div className="detail-tabs">
             <button
@@ -168,8 +243,22 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             </tbody>
           </table>
 
+          {compareStats && (
+            <table className="detail-stats compare-stats">
+              <tbody>
+                <tr><td>Mean</td><td>{formatNumber(compareStats.mean)}</td></tr>
+                <tr><td>Std Dev</td><td>{formatNumber(compareStats.std)}</td></tr>
+                <tr><td>P5</td><td>{formatNumber(compareStats.p5)}</td></tr>
+                <tr><td>P25</td><td>{formatNumber(compareStats.p25)}</td></tr>
+                <tr><td>P50</td><td>{formatNumber(compareStats.p50)}</td></tr>
+                <tr><td>P75</td><td>{formatNumber(compareStats.p75)}</td></tr>
+                <tr><td>P95</td><td>{formatNumber(compareStats.p95)}</td></tr>
+              </tbody>
+            </table>
+          )}
+
           <div className="detail-chart">
-            <Histogram hist={hist} maxBin={maxBin} stats={stats} guideMode={guideMode} />
+            <Histogram hist={hist} maxBin={maxBin} stats={stats} guideMode={guideMode} compareHist={compareHist} />
           </div>
 
           <div className="detail-controls">
@@ -278,6 +367,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
               })()}
             </div>
           </div>
+
         </div>
       )}
 
@@ -601,11 +691,12 @@ function getGuideLines(mode: GuideMode, stats: { mean: number; std: number; p5: 
   return [];
 }
 
-function Histogram({ hist, maxBin, stats, guideMode }: {
+function Histogram({ hist, maxBin, stats, guideMode, compareHist }: {
   hist: { min: number; max: number; bins: number[]; binWidth: number };
   maxBin: number;
   stats: { mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number };
   guideMode: GuideMode;
+  compareHist?: { min: number; max: number; bins: number[]; binWidth: number } | null;
 }) {
   const [hoverBin, setHoverBin] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -626,10 +717,18 @@ function Histogram({ hist, maxBin, stats, guideMode }: {
 
   const handleMouseLeave = useCallback(() => setHoverBin(null), []);
 
+  const compareTotalSamples = useMemo(
+    () => compareHist ? compareHist.bins.reduce((a, b) => a + b, 0) : 0,
+    [compareHist]
+  );
+
   const hoverInfo = hoverBin !== null ? {
     lo: hist.min + hoverBin * hist.binWidth,
     hi: hist.min + (hoverBin + 1) * hist.binWidth,
     pct: totalSamples > 0 ? (hist.bins[hoverBin] / totalSamples) * 100 : 0,
+    comparePct: compareHist && compareTotalSamples > 0
+      ? (compareHist.bins[hoverBin] / compareTotalSamples) * 100
+      : null,
   } : null;
 
   const guideLines = getGuideLines(guideMode, stats);
@@ -647,12 +746,22 @@ function Histogram({ hist, maxBin, stats, guideMode }: {
         >
           {hist.bins.map((count, i) => (
             <rect
-              key={i}
+              key={`m${i}`}
               x={i}
               y={maxBin > 0 ? 100 - (count / maxBin) * 100 : 100}
               width={0.9}
               height={maxBin > 0 ? (count / maxBin) * 100 : 0}
               className={`hist-bar ${i === hoverBin ? "hist-bar-hover" : ""}`}
+            />
+          ))}
+          {compareHist?.bins.map((count, i) => (
+            <rect
+              key={`c${i}`}
+              x={i}
+              y={maxBin > 0 ? 100 - (count / maxBin) * 100 : 100}
+              width={0.9}
+              height={maxBin > 0 ? (count / maxBin) * 100 : 0}
+              className="hist-bar-compare"
             />
           ))}
         </svg>
@@ -672,6 +781,9 @@ function Histogram({ hist, maxBin, stats, guideMode }: {
         {hoverInfo && (
           <span className="hist-hover-info">
             {formatNumber(hoverInfo.lo)}–{formatNumber(hoverInfo.hi)}: {hoverInfo.pct.toFixed(1)}%
+            {hoverInfo.comparePct !== null && (
+              <span className="hist-hover-compare"> / {hoverInfo.comparePct.toFixed(1)}%</span>
+            )}
           </span>
         )}
         <span>{formatNumber(hist.max)}</span>
