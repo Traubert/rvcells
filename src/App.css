@@ -497,7 +497,7 @@
 .grid th,
 .grid td {
   border: 1px solid var(--border);
-  padding: 0;
+  padding: 0 6px;
   height: 24px;
   overflow: hidden;
   white-space: nowrap;
@@ -534,7 +534,6 @@ thead .row-header {
 
 .cell {
   cursor: cell;
-  padding: 0 4px;
   color: var(--text);
   position: relative;
 }
