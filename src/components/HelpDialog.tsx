@@ -9,15 +9,19 @@ const PAGES = [
           <h3>Keyboard</h3>
           <table className="help-table">
             <tbody>
-              <tr><td>Enter / F2</td><td>Edit cell</td></tr>
-              <tr><td>=</td><td>Start new formula</td></tr>
-              <tr><td>Delete / Backspace</td><td>Clear cell</td></tr>
+              <tr><td>Type any character</td><td>Start editing cell</td></tr>
+              <tr><td>Enter / F2</td><td>Edit existing content</td></tr>
+              <tr><td>Delete / Backspace</td><td>Clear cell(s)</td></tr>
               <tr><td>Escape</td><td>Cancel edit / deselect</td></tr>
               <tr><td>Arrow keys</td><td>Navigate</td></tr>
+              <tr><td>Shift + Arrow</td><td>Extend selection</td></tr>
               <tr><td>Tab</td><td>Commit &amp; move right</td></tr>
-              <tr><td>R</td><td>Recalculate cell &amp; dependents</td></tr>
-              <tr><td>Shift+R</td><td>Recalculate entire sheet</td></tr>
-              <tr><td>H</td><td>This help screen</td></tr>
+              <tr><td>Ctrl+C / Ctrl+X</td><td>Copy / cut</td></tr>
+              <tr><td>Ctrl+Shift+C / X</td><td>Copy / cut resolved values</td></tr>
+              <tr><td>Ctrl+V</td><td>Paste</td></tr>
+              <tr><td>Ctrl+R</td><td>Recalculate cell &amp; dependents</td></tr>
+              <tr><td>Ctrl+Shift+R</td><td>Recalculate all sheets</td></tr>
+              <tr><td>Ctrl+H</td><td>This help screen</td></tr>
             </tbody>
           </table>
         </section>

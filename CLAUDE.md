@@ -65,7 +65,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Lockable histogram range with zoom +/− and recentre controls
 - [x] Uncertainty-based cell coloring (CV → white-to-teal interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
-- [x] Keyboard shortcuts: Enter/F2 edit, = start formula, R recalc, Shift+R full recalc, Escape deselect, H help
+- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+R recalc, Ctrl+Shift+R full recalc, Escape deselect
 - [x] Settings dialog (global sample count)
 - [x] Help dialog (two pages: basics and functions)
 - [x] File naming (editable in header, used as export filename)
@@ -98,7 +98,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Range fill: drag fill handle to copy cell with shifted references
 - [x] $ pinning in cell references ($A1, A$1, $A$1)
 - [ ] Resizable grid
-- [ ] Copy/paste
+- [x] Copy/cut/paste (Ctrl+C/X/V) with reference shifting and system clipboard (TSV)
+- [x] Copy/cut resolved values (Ctrl+Shift+C/X) — scalars as numbers, distributions as mean ± std
 
 ### P3 — advanced
 - [ ] Correlated inputs (specify correlation between distribution cells)

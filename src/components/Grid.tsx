@@ -6,6 +6,13 @@ import { formatNumber } from "../format";
 import { shiftCellText } from "../engine/fill";
 import { DetailPanel, type LockedRange } from "./DetailPanel";
 
+/** Internal clipboard for copy/paste with reference shifting */
+interface ClipboardData {
+  originCol: number;
+  originRow: number;
+  grid: (string | null)[][]; // [row][col], null = empty cell
+}
+
 const NUM_COLS = 26;
 const NUM_ROWS = 50;
 
@@ -60,6 +67,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
   const inputRef = useRef<HTMLInputElement>(null);
   const barInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const clipboardRef = useRef<ClipboardData | null>(null);
 
   useEffect(() => {
     if (editingAddr && !editingInBar && inputRef.current) {
@@ -234,17 +242,125 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
     [commitEdit]
   );
 
-  // Start editing when typing on a selected cell
+  /** Get the effective selection bounds (single cell or multi-select) */
+  const getSelectionRange = useCallback(() => {
+    if (!selectedAddr) return null;
+    const bounds = selectionBounds(selectedAddr, selAnchor);
+    if (bounds) return bounds;
+    const parsed = parseAddress(selectedAddr);
+    if (!parsed) return null;
+    return { minCol: parsed.col, maxCol: parsed.col, minRow: parsed.row, maxRow: parsed.row };
+  }, [selectedAddr, selAnchor]);
+
+  /** Format a cell's resolved value for clipboard */
+  function resolvedValue(cell: Cell | undefined): string {
+    if (!cell?.result) {
+      if (cell?.content.kind === "text") return cell.content.value;
+      return "";
+    }
+    if (cell.result.kind === "scalar") return formatNumber(cell.result.value);
+    const stats = summarize(cell.result);
+    return `${formatNumber(stats.mean)} ± ${formatNumber(stats.std)}`;
+  }
+
+  /** Copy/cut selected cells */
+  const copySelection = useCallback((cut: boolean, resolved: boolean) => {
+    const range = getSelectionRange();
+    if (!range) return;
+
+    const rows: string[][] = [];
+    const rawGrid: (string | null)[][] = [];
+    for (let r = range.minRow; r <= range.maxRow; r++) {
+      const row: string[] = [];
+      const rawRow: (string | null)[] = [];
+      for (let c = range.minCol; c <= range.maxCol; c++) {
+        const addr = toAddress(c, r);
+        const cell = sheet.cells.get(addr);
+        if (resolved) {
+          row.push(resolvedValue(cell));
+        } else {
+          row.push(cell?.raw ?? "");
+        }
+        rawRow.push(cell?.raw ?? null);
+      }
+      rows.push(row);
+      rawGrid.push(rawRow);
+    }
+
+    // Write TSV to system clipboard
+    const tsv = rows.map((r) => r.join("\t")).join("\n");
+    navigator.clipboard.writeText(tsv).catch(() => {});
+
+    // Save internal clipboard for reference shifting (only for non-resolved copy)
+    if (!resolved) {
+      clipboardRef.current = {
+        originCol: range.minCol,
+        originRow: range.minRow,
+        grid: rawGrid,
+      };
+    } else {
+      clipboardRef.current = null;
+    }
+
+    // Cut: clear source cells
+    if (cut) {
+      for (let r = range.minRow; r <= range.maxRow; r++) {
+        for (let c = range.minCol; c <= range.maxCol; c++) {
+          setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex);
+        }
+      }
+      onSheetChange();
+    }
+  }, [getSelectionRange, sheet, allSheets, sheetIndex, onSheetChange]);
+
+  /** Handle native paste event — reliable access to system clipboard */
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    if (editingAddr) return; // let normal paste work in input fields
+    if (!selectedAddr) return;
+    e.preventDefault();
+
+    const target = parseAddress(selectedAddr);
+    if (!target) return;
+
+    const internal = clipboardRef.current;
+    const systemText = e.clipboardData.getData("text/plain");
+
+    // Use internal clipboard if we have one and the system clipboard matches
+    // (i.e. the user copied from rvcells, not from another app)
+    const internalTsv = internal
+      ? internal.grid.map((r) => r.map((c) => c ?? "").join("\t")).join("\n")
+      : null;
+
+    if (internal && internalTsv === systemText) {
+      // Internal paste with reference shifting
+      const dCol = target.col - internal.originCol;
+      const dRow = target.row - internal.originRow;
+      for (let r = 0; r < internal.grid.length; r++) {
+        for (let c = 0; c < internal.grid[r].length; c++) {
+          const raw = internal.grid[r][c];
+          if (raw === null) continue;
+          const shifted = shiftCellText(raw, dCol, dRow);
+          setCellRaw(sheet, toAddress(target.col + c, target.row + r), shifted, allSheets, sheetIndex);
+        }
+      }
+    } else if (systemText) {
+      // External paste — parse TSV
+      const rows = systemText.split("\n").map((line) => line.split("\t"));
+      for (let r = 0; r < rows.length; r++) {
+        for (let c = 0; c < rows[r].length; c++) {
+          const val = rows[r][c];
+          if (val === undefined) continue;
+          setCellRaw(sheet, toAddress(target.col + c, target.row + r), val, allSheets, sheetIndex);
+        }
+      }
+    }
+    onSheetChange();
+  }, [editingAddr, selectedAddr, sheet, allSheets, sheetIndex, onSheetChange]);
+
   const handleGridKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (editingAddr) return;
-
-      // H: show help (works even without selection)
-      if ((e.key === "h" || e.key === "H") && !e.ctrlKey && !e.metaKey) {
-        onShowHelp?.();
-        e.preventDefault();
-        return;
-      }
+      const ctrl = e.ctrlKey || e.metaKey;
 
       if (!selectedAddr) return;
 
@@ -255,13 +371,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
           startEditing(selectedAddr, cell?.raw ?? "", false);
         }
         e.preventDefault();
-      }
-      // = : start a new formula (single selection only)
-      if (e.key === "=" && !e.ctrlKey && !e.metaKey) {
-        if (!selAnchor) {
-          startEditing(selectedAddr, "=", false);
-        }
-        e.preventDefault();
+        return;
       }
       // Arrow keys: plain = move + clear multi-select, shift = extend selection
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
@@ -276,12 +386,11 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
         const newAddr = toAddress(col, row);
         setSelectedAddr(newAddr);
         if (e.shiftKey) {
-          // Start or extend selection — anchor stays where it was
           if (!selAnchor) setSelAnchor(selectedAddr);
         } else {
-          // Plain arrow — clear multi-selection
           setSelAnchor(null);
         }
+        return;
       }
       // Delete/Backspace: clear selected cell(s)
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -298,18 +407,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
         setSelAnchor(null);
         onSheetChange();
         e.preventDefault();
-      }
-      // Shift+R: full recalculate everything
-      if (e.key === "R" && e.shiftKey) {
-        recalculateAll(allSheets);
-        onSheetChange();
-        e.preventDefault();
-      }
-      // r: recalculate current cell and dependents
-      if (e.key === "r" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        recalculateAllFrom(allSheets, sheetIndex, [selectedAddr]);
-        onSheetChange();
-        e.preventDefault();
+        return;
       }
       // Escape: clear multi-selection first, then deselect
       if (e.key === "Escape") {
@@ -319,16 +417,59 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
           setSelectedAddr(null);
         }
         e.preventDefault();
+        return;
+      }
+      // Ctrl+C / Ctrl+Shift+C: copy (shift = resolved values)
+      if (ctrl && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        copySelection(false, e.shiftKey);
+        return;
+      }
+      // Ctrl+X / Ctrl+Shift+X: cut (shift = resolved values)
+      if (ctrl && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+        copySelection(true, e.shiftKey);
+        return;
+      }
+      // Ctrl+H: help
+      if (ctrl && e.key.toLowerCase() === "h") {
+        onShowHelp?.();
+        e.preventDefault();
+        return;
+      }
+      // Ctrl+V: handled by onPaste event (don't preventDefault here)
+      if (ctrl && e.key.toLowerCase() === "v") {
+        return;
+      }
+      // Ctrl+R: recalculate current cell and dependents
+      if (ctrl && e.key.toLowerCase() === "r" && !e.shiftKey) {
+        recalculateAllFrom(allSheets, sheetIndex, [selectedAddr]);
+        onSheetChange();
+        e.preventDefault();
+        return;
+      }
+      // Ctrl+Shift+R: full recalculate everything
+      if (ctrl && e.key.toLowerCase() === "r" && e.shiftKey) {
+        recalculateAll(allSheets);
+        onSheetChange();
+        e.preventDefault();
+        return;
+      }
+      // Direct typing: printable character starts editing the cell
+      if (!ctrl && !e.altKey && e.key.length === 1 && !selAnchor) {
+        startEditing(selectedAddr, e.key, false);
+        e.preventDefault();
+        return;
       }
     },
-    [editingAddr, selectedAddr, selAnchor, sheet, onSheetChange, onShowHelp]
+    [editingAddr, selectedAddr, selAnchor, sheet, allSheets, sheetIndex, onSheetChange, copySelection]
   );
 
   const selBounds = selectionBounds(selectedAddr, selAnchor);
   const isMultiSelect = selBounds !== null;
 
   return (
-    <div className="grid-container" ref={gridRef} tabIndex={0} onKeyDown={handleGridKeyDown}>
+    <div className="grid-container" ref={gridRef} tabIndex={0} onKeyDown={handleGridKeyDown} onPaste={handlePaste}>
       {/* Formula bar */}
       <div className="formula-bar">
         <span className="formula-bar-addr">{selectedAddr ?? ""}</span>

@@ -299,20 +299,41 @@ A proper **tornado diagram**: for each distribution input, the output is evaluat
 
 For inputs that have a negative effect (e.g. a cost subtracted from revenue), the colours reverse: green appears on the left (input low → output high) and red on the right.
 
+## Copy, cut, and paste
+
+Select one or more cells, then:
+
+- **Ctrl+C** — copy cell contents (formulas and raw text)
+- **Ctrl+X** — cut (copy and clear source cells)
+- **Ctrl+V** — paste at the current selection
+
+Cell references in formulas are shifted by the paste offset, just like range fill. Pinned references (`$A$1`) are not shifted. Variable references are never shifted.
+
+The clipboard uses TSV format, so you can paste rvcells data into other applications (Excel, Google Sheets, text editors) and vice versa.
+
+### Copying resolved values
+
+- **Ctrl+Shift+C** — copy resolved values (not formulas)
+- **Ctrl+Shift+X** — cut resolved values
+
+This copies the computed result of each cell: plain numbers for scalars, and "mean ± std" for distributions. Useful for exporting results to other tools.
+
 ## Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| Enter / F2 | Edit selected cell |
-| = | Start a new formula |
+| Any character | Start editing cell with that character |
+| Enter / F2 | Edit existing cell content |
 | Delete / Backspace | Clear selected cell(s) |
 | Escape | Cancel edit, or clear selection, or deselect |
 | Arrow keys | Navigate between cells |
 | Shift + Arrow | Extend multi-cell selection |
 | Tab | Commit edit and move right |
-| R | Recalculate current cell and its dependents |
-| Shift+R | Recalculate entire sheet |
-| H | Open help screen |
+| Ctrl+C / Ctrl+X | Copy / cut |
+| Ctrl+Shift+C / X | Copy / cut resolved values |
+| Ctrl+V | Paste |
+| Ctrl+R | Recalculate current cell and its dependents |
+| Ctrl+Shift+R | Recalculate all sheets |
 
 ## Saving and loading
 
