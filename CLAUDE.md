@@ -12,15 +12,17 @@ A spreadsheet application where **random variables are a first-class cell type**
 
 ### Source layout
 - `src/engine/types.ts` — core types (CellResult, Distribution, Expr, Cell, Sheet)
-- `src/engine/parser.ts` — cell input parser and recursive descent expression parser
+- `src/engine/parser.ts` — cell input parser and recursive descent expression parser; supports cross-sheet refs (`Sheet.A1`, `'Sheet Name'.var`)
 - `src/engine/parser.test.ts` — parser test suite (vitest)
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
-- `src/engine/evaluate.ts` — DAG evaluation, incremental recalculation, cycle detection, built-in functions, summary stats, histograms
-- `src/engine/file.ts` — JSON file format, import/export (browser download/upload)
+- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, summary stats, histograms, sheet rename/delete helpers
+- `src/engine/file.ts` — JSON file format v2 (multi-sheet), import/export with v1 backward compat
 - `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
 - `src/components/Grid.tsx` — spreadsheet grid UI, keyboard navigation, formula bar
 - `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls
+- `src/components/TabBar.tsx` — sheet tab bar with add/close/rename
+- `src/components/ConfirmDialog.tsx` — reusable confirmation dialog
 
 ## Core Concepts
 
@@ -37,7 +39,7 @@ A cell can optionally define a **named variable** by prefixing the content with 
 - Eventually configurable per-DAG and per-cell. Per-cell overrides mean antecedent cells produce more samples to feed the high-resolution cell, while other dependents only use the prefix of the array they need.
 
 ### Evaluation model
-The dependency graph is a DAG evaluated in topological order. Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents are re-evaluated.
+The dependency graph is a DAG evaluated in topological order across all sheets (global topo sort). Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents (including cross-sheet) are re-evaluated. Duplicate variable names are detected and errored (first definition wins).
 
 ### Display
 Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, teal = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells.
@@ -66,7 +68,12 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Keyboard shortcuts: Enter/F2 edit, = start formula, R recalc, Shift+R full recalc, Escape deselect, H help
 - [x] Settings dialog (global sample count)
 - [x] Help dialog (two pages: basics and functions)
-- [x] Sheet naming (editable in header, used as export filename)
+- [x] File naming (editable in header, used as export filename)
+- [x] Tabbed sheets with add/close/rename, duplicate name prevention
+- [x] Cross-sheet cell references (`Data.A1`) and variable references (`Data.income`)
+- [x] Quoted sheet names for spaces (`'My Sheet'.A1`)
+- [x] Sheet rename propagates to all cross-sheet references
+- [x] Sheet delete warns if referenced, with in-app confirmation dialog
 - [x] Bernoulli(p) and Discrete(p1, ..., pN) distributions
 - [x] resample(cell): re-evaluate sub-DAG with fresh random draws
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete
@@ -74,8 +81,11 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Range unit selector (value, σ, percentile) for locked range
 
 ### P1 — analysis
-- [ ] Sensitivity analysis: for a selected output cell, show rank correlation with each input
-- [ ] Tornado diagram: visualize which inputs contribute most to output variance
+- [x] Correlation tab: Spearman rank correlation of each distribution input with the output
+- [x] Variance tab: r² variance contribution for each input
+- [x] Tornado tab: one-at-a-time P5/P95 sweep with directional coloring (green=input high, red=input low)
+- [x] Inline distribution sample capture for sensitivity analysis of formulas with embedded distributions
+- [x] Deterministic mode for tornado evaluation (distribution constructors return expected values)
 - [x] Percentile display (P5, P25, P50, P75, P95) in the detail panel
 - [ ] Conditional formatting / heatmap coloring based on variance or spread
 

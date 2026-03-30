@@ -30,6 +30,12 @@ export type CellContent =
   | { kind: "distribution"; dist: Distribution }
   | { kind: "formula"; expr: Expr };
 
+/** Captured inline distribution samples for sensitivity analysis */
+export interface InlineSample {
+  label: string;       // e.g. "Normal(100, 10)"
+  values: Float64Array;
+}
+
 /** Full cell state */
 export interface Cell {
   raw: string; // what the user typed
@@ -38,6 +44,7 @@ export interface Cell {
   labelVar?: boolean; // if true, variable name is derived from the text cell to the left
   result?: CellResult;
   error?: string;
+  inlineSamples?: InlineSample[]; // captured during evaluation for sensitivity analysis
 }
 
 /** Cell address as "A1" style string */

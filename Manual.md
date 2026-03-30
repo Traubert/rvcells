@@ -258,6 +258,47 @@ Each sample's income depends on whether that particular sample is employed or no
 
 This returns 0 with probability 80%, 1 with probability 15%, and 2 with probability 5%. Combined with nested `if()` calls or arithmetic on the state values, you can build arbitrarily complex multi-state Markov chains.
 
+## Analysis views
+
+When you click on a distribution cell that contains a formula, the detail panel shows four tabs:
+
+### Distribution
+
+The default view — histogram, summary statistics (mean, std dev, percentiles), and range controls. This is the same view shown for non-formula distribution cells.
+
+### Correlation
+
+Shows the **Spearman rank correlation coefficient** between each distribution input and the output cell. This answers: "when this input is high, does the output tend to be high or low?"
+
+- Inputs are the leaf distribution sources in the formula's dependency chain — the cells where randomness originates
+- Sorted by absolute correlation (most influential first)
+- Green bars = positive correlation (input up → output up)
+- Red bars = negative correlation (input up → output down)
+- Values range from −1 (perfect inverse) to +1 (perfect direct)
+- Scalar inputs are excluded (they have no rank variation)
+
+Inputs are labelled with their variable name if they have one, or their cell address. Inline distributions (like `Normal(100, 10)` written directly in the formula) are also detected and analysed.
+
+### Variance
+
+Shows the **variance contribution** (r²) of each input — what fraction of the output's variance is explained by each input. This is the square of the rank correlation.
+
+- Sorted by contribution (largest first)
+- Scalar inputs are shown with zero-width bars and "(scalar)" label for context
+
+### Tornado
+
+A proper **tornado diagram**: for each distribution input, the output is evaluated with that input at its 5th and 95th percentile while all other inputs are held at their expected values. This shows the output range each input can cause on its own.
+
+- Sorted by swing (largest range first — the classic tornado shape)
+- Green = effect of the input going high (P95)
+- Red = effect of the input going low (P5)
+- A vertical baseline line marks the output's mean
+- Labels inside the bars show the delta from baseline (e.g. −1640 / +1640)
+- The "Swing" column shows the total range
+
+For inputs that have a negative effect (e.g. a cost subtracted from revenue), the colours reverse: green appears on the left (input low → output high) and red on the right.
+
 ## Keyboard shortcuts
 
 | Key | Action |
@@ -275,9 +316,9 @@ This returns 0 with probability 80%, 1 with probability 15%, and 2 with probabil
 
 ## Saving and loading
 
-Use the **rvcells** menu (top left) to import and export sheets as JSON files. The file stores the raw text of every cell, the sheet name, and settings like the sample count. Cell values are recomputed on load.
+Use the **rvcells** menu (top left) to import and export files as JSON. The file stores the raw text of every cell across all sheets, sheet names, and settings like the sample count. Cell values are recomputed on load.
 
-The sheet name (editable in the top centre of the screen) is used as the filename when exporting.
+The file name (editable in the top centre of the title bar) is used as the filename when exporting.
 
 ## Settings
 

@@ -879,3 +879,207 @@ thead .row-header {
   font-size: 24px;
   color: var(--text-bright);
 }
+
+/* Detail panel tabs */
+.detail-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.detail-tab {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.detail-tab:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.detail-tab-active {
+  color: var(--text-bright);
+  border-color: var(--accent);
+  background: rgba(108, 99, 255, 0.1);
+}
+
+.detail-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 16px;
+}
+
+/* Analysis scroll container */
+.analysis-scroll {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 180px;
+}
+
+/* Sensitivity table */
+.sensitivity-table,
+.tornado-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.sensitivity-table th,
+.tornado-table th {
+  font-weight: 500;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 8px 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sensitivity-table td,
+.tornado-table td {
+  padding: 3px 8px 3px 0;
+  border: none;
+  vertical-align: middle;
+}
+
+.sens-label-col,
+.tornado-label-col {
+  width: 30%;
+  text-align: left;
+}
+
+.sens-bar-col,
+.tornado-bar-col {
+  width: 55%;
+  text-align: left;
+}
+
+.sens-value-col,
+.tornado-value-col {
+  width: 15%;
+  text-align: right;
+}
+
+.sens-label,
+.tornado-label {
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.sens-value,
+.tornado-value {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Sensitivity bars */
+.sens-bar-track {
+  position: relative;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+.sens-bar-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.sens-bar {
+  position: absolute;
+  top: 1px;
+  height: 12px;
+  border-radius: 1px;
+}
+
+.sens-bar-pos {
+  background: #45b070;
+  opacity: 0.7;
+}
+
+.sens-bar-neg {
+  background: #e05555;
+  opacity: 0.7;
+}
+
+/* Tornado bars */
+.tornado-bar-track {
+  position: relative;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+.tornado-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  opacity: 0.7;
+  border-radius: 2px;
+}
+
+.tornado-bar-low {
+  background: #e05555;
+}
+
+.tornado-bar-high {
+  background: #45b070;
+}
+
+.variance-bar {
+  background: var(--accent);
+}
+
+.tornado-bar-label {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  font-size: 9px;
+  line-height: 14px;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  pointer-events: none;
+  padding: 0 3px;
+}
+
+.tornado-bar-label-left {
+  text-align: left;
+}
+
+.tornado-bar-label-right {
+  text-align: right;
+}
+
+.tornado-baseline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-dim);
+}
+
+.tornado-scalar td {
+  opacity: 0.5;
+}
+
+.tornado-scalar-tag,
+.sens-inline-tag {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.sens-inline td {
+  opacity: 0.6;
+}

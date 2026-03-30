@@ -3,6 +3,22 @@ import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
 
+/** Names of distribution constructor functions.
+ *  Keep in sync with the cases in evalFunc — if you add a distribution there, add it here. */
+const DISTRIBUTION_CONSTRUCTORS = new Set([
+  "normal", "lognormal", "uniform", "triangular", "beta", "bernoulli", "discrete",
+]);
+
+import type { InlineSample } from "./types";
+
+/** Module-level capture for inline distribution samples during formula evaluation.
+ *  Set by evalCell before evaluating a formula, read by evalFunc. */
+let _inlineSampleCapture: InlineSample[] | null = null;
+
+/** When true, distribution constructors return their expected value as a scalar
+ *  instead of generating random samples. Used by tornado scenario evaluation. */
+let _deterministicMode = false;
+
 /** Global cell address: "sheetIdx:cellAddr" */
 type GlobalAddr = string;
 
@@ -406,6 +422,18 @@ function collectSubDag(
   return order;
 }
 
+/** Capture inline distribution samples for sensitivity analysis.
+ *  In deterministic mode, returns the expected value as a scalar instead. */
+function captureDist(label: string, result: CellResult, expectedValue?: number): CellResult {
+  if (_deterministicMode && expectedValue !== undefined) {
+    return { kind: "scalar", value: expectedValue };
+  }
+  if (_inlineSampleCapture && result.kind === "samples") {
+    _inlineSampleCapture.push({ label, values: result.values });
+  }
+  return result;
+}
+
 /** Evaluate a function call */
 function evalFunc(
   name: string,
@@ -495,40 +523,51 @@ function evalFunc(
       return applyElementwise(args, (c, t, e) => c > 0 ? t : e, n);
 
     // Distribution constructors — return sample arrays
+    // Each captures its samples for sensitivity analysis via _inlineSampleCapture
     case "normal": {
       if (args.length !== 2) throw new Error("Normal(mean, std) takes 2 arguments");
       const [meanR, stdR] = args;
       if (meanR.kind !== "scalar" || stdR.kind !== "scalar")
         throw new Error("Normal() parameters must be scalars");
-      return { kind: "samples", values: sample({ type: "Normal", mean: meanR.value, std: stdR.value }, n) };
+      return captureDist(`Normal(${meanR.value}, ${stdR.value})`,
+        { kind: "samples", values: sample({ type: "Normal", mean: meanR.value, std: stdR.value }, n) },
+        meanR.value);
     }
     case "lognormal": {
       if (args.length !== 2) throw new Error("LogNormal(mu, sigma) takes 2 arguments");
       const [muR, sigmaR] = args;
       if (muR.kind !== "scalar" || sigmaR.kind !== "scalar")
         throw new Error("LogNormal() parameters must be scalars");
-      return { kind: "samples", values: sample({ type: "LogNormal", mu: muR.value, sigma: sigmaR.value }, n) };
+      return captureDist(`LogNormal(${muR.value}, ${sigmaR.value})`,
+        { kind: "samples", values: sample({ type: "LogNormal", mu: muR.value, sigma: sigmaR.value }, n) },
+        Math.exp(muR.value + sigmaR.value * sigmaR.value / 2));
     }
     case "uniform": {
       if (args.length !== 2) throw new Error("Uniform(low, high) takes 2 arguments");
       const [lowR, highR] = args;
       if (lowR.kind !== "scalar" || highR.kind !== "scalar")
         throw new Error("Uniform() parameters must be scalars");
-      return { kind: "samples", values: sample({ type: "Uniform", low: lowR.value, high: highR.value }, n) };
+      return captureDist(`Uniform(${lowR.value}, ${highR.value})`,
+        { kind: "samples", values: sample({ type: "Uniform", low: lowR.value, high: highR.value }, n) },
+        (lowR.value + highR.value) / 2);
     }
     case "triangular": {
       if (args.length !== 3) throw new Error("Triangular(low, mode, high) takes 3 arguments");
       const [tLow, tMode, tHigh] = args;
       if (tLow.kind !== "scalar" || tMode.kind !== "scalar" || tHigh.kind !== "scalar")
         throw new Error("Triangular() parameters must be scalars");
-      return { kind: "samples", values: sample({ type: "Triangular", low: tLow.value, mode: tMode.value, high: tHigh.value }, n) };
+      return captureDist(`Triangular(${tLow.value}, ${tMode.value}, ${tHigh.value})`,
+        { kind: "samples", values: sample({ type: "Triangular", low: tLow.value, mode: tMode.value, high: tHigh.value }, n) },
+        (tLow.value + tMode.value + tHigh.value) / 3);
     }
     case "beta": {
       if (args.length !== 2) throw new Error("Beta(alpha, beta) takes 2 arguments");
       const [alphaR, betaR] = args;
       if (alphaR.kind !== "scalar" || betaR.kind !== "scalar")
         throw new Error("Beta() parameters must be scalars");
-      return { kind: "samples", values: sample({ type: "Beta", alpha: alphaR.value, beta: betaR.value }, n) };
+      return captureDist(`Beta(${alphaR.value}, ${betaR.value})`,
+        { kind: "samples", values: sample({ type: "Beta", alpha: alphaR.value, beta: betaR.value }, n) },
+        alphaR.value / (alphaR.value + betaR.value));
     }
 
     // Bernoulli distribution — samples 0/1
@@ -539,7 +578,7 @@ function evalFunc(
       const p = pR.value;
       const out = new Float64Array(n);
       for (let i = 0; i < n; i++) out[i] = Math.random() < p ? 1 : 0;
-      return { kind: "samples", values: out };
+      return captureDist(`Bernoulli(${p})`, { kind: "samples", values: out }, p);
     }
 
     // Discrete distribution — samples from {0, 1, ..., N-1}
@@ -559,12 +598,16 @@ function evalFunc(
       }
       const out = new Float64Array(n);
       for (let i = 0; i < n; i++) {
-        const u = Math.random() * cumsum; // normalize by cumsum to handle non-unit sums
+        const u = Math.random() * cumsum;
         let j = 0;
         while (j < cdf.length - 1 && u >= cdf[j]) j++;
         out[i] = j;
       }
-      return { kind: "samples", values: out };
+      // Expected value: weighted mean of indices
+      let ev = 0;
+      for (let i = 0; i < probs.length; i++) ev += i * probs[i];
+      ev /= cumsum;
+      return captureDist(`Discrete(${probs.join(", ")})`, { kind: "samples", values: out }, ev);
     }
 
     default:
@@ -604,13 +647,25 @@ function evalCell(
           values: sample(cell.content.dist, numSamples),
         };
         break;
-      case "formula":
+      case "formula": {
+        // Capture inline distribution samples for sensitivity analysis
+        if (!tempOnly) {
+          _inlineSampleCapture = [];
+        }
         result = evalExpr(cell.content.expr, results, varMap, numSamples, cells, ctx);
+        if (!tempOnly && _inlineSampleCapture && _inlineSampleCapture.length > 0) {
+          cell.inlineSamples = _inlineSampleCapture;
+        } else if (!tempOnly) {
+          cell.inlineSamples = undefined;
+        }
+        _inlineSampleCapture = null;
         break;
+      }
     }
   } catch (e) {
     if (!tempOnly) cell.error = (e as Error).message;
     result = undefined;
+    _inlineSampleCapture = null;
   }
   if (!tempOnly) {
     cell.result = result;
@@ -1195,6 +1250,387 @@ export function summarize(result: CellResult): {
   const p = (frac: number) => sorted[Math.floor(frac * (n - 1))];
 
   return { mean, std, p5: p(0.05), p25: p(0.25), p50: p(0.5), p75: p(0.75), p95: p(0.95) };
+}
+
+// ─── Sensitivity analysis ────────────────────────────────────────────
+
+/** Check if an expression contains any inline distribution constructors */
+function hasInlineDistribution(expr: Expr): boolean {
+  switch (expr.type) {
+    case "number":
+    case "cellRef":
+    case "varRef":
+    case "sheetCellRef":
+    case "sheetVarRef":
+      return false;
+    case "binOp":
+      return hasInlineDistribution(expr.left) || hasInlineDistribution(expr.right);
+    case "unaryMinus":
+      return hasInlineDistribution(expr.operand);
+    case "funcCall":
+      if (DISTRIBUTION_CONSTRUCTORS.has(expr.name)) return true;
+      return expr.args.some(hasInlineDistribution);
+  }
+}
+
+/** Extract descriptions of inline distribution calls from an expression */
+function collectInlineDistCalls(expr: Expr): string[] {
+  const results: string[] = [];
+  function walk(e: Expr) {
+    switch (e.type) {
+      case "funcCall":
+        if (DISTRIBUTION_CONSTRUCTORS.has(e.name)) {
+          // Format: capitalize name, show literal number args
+          const name = e.name.charAt(0).toUpperCase() + e.name.slice(1);
+          const args = e.args.map((a) => a.type === "number" ? String(a.value) : "...");
+          results.push(`${name}(${args.join(", ")})`);
+          return; // don't recurse into dist constructor args
+        }
+        e.args.forEach(walk);
+        break;
+      case "binOp": walk(e.left); walk(e.right); break;
+      case "unaryMinus": walk(e.operand); break;
+      default: break;
+    }
+  }
+  walk(expr);
+  return results;
+}
+
+/** An input cell for sensitivity analysis */
+export interface SensitivityInput {
+  sheetIndex: number;
+  addr: CellAddress;
+  label: string;          // variable name, or "Sheet.var", or cell address
+  detail: string;         // raw cell text for context
+  result: CellResult;
+  isScalar: boolean;
+  isInline?: boolean;     // inline distribution — no separate samples for correlation
+}
+
+/**
+ * Collect the distribution inputs (sources of randomness) for a given output cell.
+ * Walks the sub-DAG and returns leaf cells that introduce their own randomness:
+ * - Distribution cells (content.kind === "distribution")
+ * - Formulas with inline distribution constructors
+ * - Scalar cells (for tornado context, marked isScalar=true)
+ * Intermediate formula cells (that just combine upstream randomness) are excluded.
+ */
+export function collectInputs(
+  outputAddr: CellAddress,
+  outputSheetIdx: number,
+  allSheets: Sheet[],
+): SensitivityInput[] {
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+  const visited = new Set<GlobalAddr>();
+  const inputs: SensitivityInput[] = [];
+
+  function visit(sheetIdx: number, addr: CellAddress) {
+    const ga = toGlobal(sheetIdx, addr);
+    if (visited.has(ga)) return;
+    visited.add(ga);
+
+    const cell = allSheets[sheetIdx]?.cells.get(addr);
+    if (!cell) return;
+
+    const isSource =
+      cell.content.kind === "distribution" ||
+      cell.content.kind === "number" ||
+      (cell.content.kind === "formula" && hasInlineDistribution(cell.content.expr));
+
+    if (isSource && cell.result) {
+      // Build label
+      let label: string;
+      if (cell.variableName) {
+        label = sheetIdx !== outputSheetIdx
+          ? `${allSheets[sheetIdx].name}.${cell.variableName}`
+          : cell.variableName;
+      } else {
+        label = sheetIdx !== outputSheetIdx
+          ? `${allSheets[sheetIdx].name}.${addr}`
+          : addr;
+      }
+
+      inputs.push({
+        sheetIndex: sheetIdx,
+        addr,
+        label,
+        detail: cell.raw,
+        result: cell.result,
+        isScalar: cell.result.kind === "scalar",
+      });
+
+      // Don't recurse into source cells' dependencies — they're leaf sources
+      // (Exception: formulas with inline distributions may also depend on other cells,
+      //  but we treat the whole cell as one source for simplicity)
+      if (cell.content.kind !== "formula") return;
+    }
+
+    // Recurse into dependencies
+    if (cell.content.kind === "formula") {
+      const { cellRefs, varRefs, sheetRefs } = exprDeps(cell.content.expr);
+      for (const ref of cellRefs) {
+        visit(sheetIdx, ref);
+      }
+      for (const v of varRefs) {
+        const resolved = allVarMaps[sheetIdx].get(v);
+        if (resolved) visit(sheetIdx, resolved);
+      }
+      for (const sr of sheetRefs) {
+        const targetIdx = findSheetIndex(allSheets, sr.sheet);
+        if (targetIdx < 0) continue;
+        if (sr.addr) {
+          visit(targetIdx, sr.addr);
+        } else if (sr.varName) {
+          const resolved = allVarMaps[targetIdx].get(sr.varName);
+          if (resolved) visit(targetIdx, resolved);
+        }
+      }
+    }
+  }
+
+  // Start from the output cell's dependencies (not the output itself)
+  const outputCell = allSheets[outputSheetIdx]?.cells.get(outputAddr);
+  if (!outputCell || outputCell.content.kind !== "formula") return [];
+
+  const { cellRefs, varRefs, sheetRefs } = exprDeps(outputCell.content.expr);
+  for (const ref of cellRefs) {
+    visit(outputSheetIdx, ref);
+  }
+  for (const v of varRefs) {
+    const resolved = allVarMaps[outputSheetIdx].get(v);
+    if (resolved) visit(outputSheetIdx, resolved);
+  }
+  for (const sr of sheetRefs) {
+    const targetIdx = findSheetIndex(allSheets, sr.sheet);
+    if (targetIdx < 0) continue;
+    if (sr.addr) {
+      visit(targetIdx, sr.addr);
+    } else if (sr.varName) {
+      const resolved = allVarMaps[targetIdx].get(sr.varName);
+      if (resolved) visit(targetIdx, resolved);
+    }
+  }
+
+  // Include inline distribution samples captured during evaluation
+  if (outputCell.inlineSamples) {
+    for (const is of outputCell.inlineSamples) {
+      inputs.push({
+        sheetIndex: outputSheetIdx,
+        addr: outputAddr,
+        label: is.label,
+        detail: `inline in ${outputAddr}`,
+        result: { kind: "samples", values: is.values },
+        isScalar: false,
+        isInline: true,
+      });
+    }
+  }
+
+  return inputs;
+}
+
+/** Compute Spearman rank correlation between two Float64Arrays */
+export function spearmanCorrelation(a: Float64Array, b: Float64Array): number {
+  const n = Math.min(a.length, b.length);
+  if (n < 3) return 0;
+
+  // Rank arrays (average rank for ties)
+  function rank(arr: Float64Array): Float64Array {
+    const indices = Array.from({ length: n }, (_, i) => i);
+    indices.sort((i, j) => arr[i] - arr[j]);
+    const ranks = new Float64Array(n);
+    let i = 0;
+    while (i < n) {
+      let j = i;
+      while (j < n - 1 && arr[indices[j + 1]] === arr[indices[j]]) j++;
+      const avgRank = (i + j) / 2;
+      for (let k = i; k <= j; k++) ranks[indices[k]] = avgRank;
+      i = j + 1;
+    }
+    return ranks;
+  }
+
+  const ra = rank(a);
+  const rb = rank(b);
+
+  // Pearson correlation on ranks
+  let sumA = 0, sumB = 0;
+  for (let i = 0; i < n; i++) { sumA += ra[i]; sumB += rb[i]; }
+  const meanA = sumA / n, meanB = sumB / n;
+
+  let cov = 0, varA = 0, varB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = ra[i] - meanA;
+    const db = rb[i] - meanB;
+    cov += da * db;
+    varA += da * da;
+    varB += db * db;
+  }
+
+  if (varA === 0 || varB === 0) return 0;
+  return cov / Math.sqrt(varA * varB);
+}
+
+/** Tornado diagram data: for each input, the output value when that input
+ *  is at mean-σ vs mean+σ while all others are held at their means.
+ *  outputAtLow = output when input is at mean-σ
+ *  outputAtHigh = output when input is at mean+σ */
+export interface TornadoBar {
+  label: string;
+  detail: string;
+  outputAtLow: number;   // output when this input is at mean - σ
+  outputAtHigh: number;   // output when this input is at mean + σ
+  isInline: boolean;
+}
+
+/**
+ * Compute tornado diagram data for a given output cell.
+ * For each distribution input, evaluates the output with that input at ±1σ
+ * while all other inputs are held at their means.
+ */
+export function computeTornado(
+  outputAddr: CellAddress,
+  outputSheetIdx: number,
+  allSheets: Sheet[],
+): TornadoBar[] {
+  const inputs = collectInputs(outputAddr, outputSheetIdx, allSheets);
+  const distInputs = inputs.filter((inp) => !inp.isScalar && inp.result.kind === "samples");
+  if (distInputs.length === 0) return [];
+
+  const outputCell = allSheets[outputSheetIdx]?.cells.get(outputAddr);
+  if (!outputCell || outputCell.content.kind !== "formula") return [];
+
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+
+  // Compute stats for each distribution input
+  const inputStats = distInputs.map((inp) => {
+    const s = summarize(inp.result);
+    return { ...inp, mean: s.mean, std: s.std, p5: s.p5, p95: s.p95 };
+  });
+
+  // Collect the output cell's sub-DAG in topological order (for deterministic re-evaluation)
+  const subDag = collectSubDag(outputAddr, allSheets[outputSheetIdx].cells, allVarMaps[outputSheetIdx]);
+
+  // Map of distribution input addrs to their mean values (for holding at baseline)
+  const inputMeans = new Map<string, number>(); // "sheetIdx:addr" → mean
+  for (const inp of inputStats) {
+    if (!inp.isInline) {
+      inputMeans.set(toGlobal(inp.sheetIndex, inp.addr), inp.mean);
+    }
+  }
+
+  /**
+   * Deterministically evaluate the output's sub-DAG with one input at a specific value
+   * and all other distribution inputs at their means.
+   */
+  function evalScenario(
+    variedInputGA: string | null, // global addr of the input being varied (null = all at means)
+    variedValue: number,
+  ): number {
+    const scenarioResults: Map<CellAddress, CellResult>[] = allSheets.map((sheet) => {
+      const results = new Map<CellAddress, CellResult>();
+      for (const [addr, cell] of sheet.cells) {
+        if (cell.result) results.set(addr, cell.result);
+      }
+      return results;
+    });
+
+    // Override all distribution inputs with their means
+    for (const [ga, mean] of inputMeans) {
+      const { sheetIdx, addr } = fromGlobal(ga);
+      scenarioResults[sheetIdx].set(addr, { kind: "scalar", value: mean });
+    }
+
+    // Override the varied input with the scenario value
+    if (variedInputGA) {
+      const { sheetIdx, addr } = fromGlobal(variedInputGA);
+      scenarioResults[sheetIdx].set(addr, { kind: "scalar", value: variedValue });
+    }
+
+    // Re-evaluate the sub-DAG in topological order
+    const ctx: CrossSheetCtx = {
+      allSheets,
+      currentSheetIdx: outputSheetIdx,
+      allVarMaps,
+      allResults: scenarioResults,
+    };
+
+    _deterministicMode = true;
+    try {
+      for (const addr of subDag) {
+        const cell = allSheets[outputSheetIdx].cells.get(addr);
+        if (!cell) continue;
+        // Skip cells that are distribution inputs (already overridden)
+        const ga = toGlobal(outputSheetIdx, addr);
+        if (inputMeans.has(ga)) continue;
+
+        if (cell.content.kind === "formula") {
+          const result = evalExpr(
+            cell.content.expr,
+            scenarioResults[outputSheetIdx],
+            allVarMaps[outputSheetIdx],
+            1,
+            allSheets[outputSheetIdx].cells,
+            ctx,
+          );
+          scenarioResults[outputSheetIdx].set(addr,
+            result.kind === "scalar" ? result : { kind: "scalar", value: summarize(result).mean });
+        }
+      }
+
+      const outResult = scenarioResults[outputSheetIdx].get(outputAddr);
+      if (!outResult) return NaN;
+      return outResult.kind === "scalar" ? outResult.value : summarize(outResult).mean;
+    } catch {
+      return NaN;
+    } finally {
+      _deterministicMode = false;
+    }
+  }
+
+  const bars: TornadoBar[] = [];
+  for (const inp of inputStats) {
+    if (inp.p5 === inp.p95) continue;
+
+    const lowVal = inp.p5;
+    const highVal = inp.p95;
+
+    if (inp.isInline) {
+      // Can't do one-at-a-time override for inline distributions
+      // Estimate swing from correlation and output P5-P95 range
+      const r = spearmanCorrelation(inp.result.values, outputCell.result!.values);
+      const outputStats = summarize(outputCell.result!);
+      const outputRange = outputStats.p95 - outputStats.p5;
+      const swing = Math.abs(r) * outputRange / 2;
+      bars.push({
+        label: inp.label,
+        detail: inp.detail,
+        outputAtLow: outputStats.mean - swing * Math.sign(r),
+        outputAtHigh: outputStats.mean + swing * Math.sign(r),
+        isInline: true,
+      });
+    } else {
+      const ga = toGlobal(inp.sheetIndex, inp.addr);
+      const outputLow = evalScenario(ga, lowVal);
+      const outputHigh = evalScenario(ga, highVal);
+      if (!isNaN(outputLow) && !isNaN(outputHigh)) {
+        bars.push({
+          label: inp.label,
+          detail: inp.detail,
+          outputAtLow: outputLow,
+          outputAtHigh: outputHigh,
+          isInline: false,
+        });
+      }
+    }
+  }
+
+  // Sort by swing (largest first = tornado shape)
+  bars.sort((a, b) =>
+    Math.abs(b.outputAtHigh - b.outputAtLow) - Math.abs(a.outputAtHigh - a.outputAtLow)
+  );
+  return bars;
 }
 
 /** Compute histogram bins from samples.

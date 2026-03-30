@@ -436,6 +436,8 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
         <DetailPanel
           addr={selectedAddr}
           cell={sheet.cells.get(selectedAddr)!}
+          allSheets={allSheets}
+          sheetIndex={sheetIndex}
           lockedRange={lockedRange}
           onLockRange={setLockedRange}
           onReturnFocus={() => gridRef.current?.focus()}

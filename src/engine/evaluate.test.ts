@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet } from "./evaluate";
+import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation } from "./evaluate";
 import type { Sheet } from "./types";
 import { parseCell } from "./parser";
 
@@ -711,6 +711,65 @@ describe("cross-sheet references", () => {
     const cell = sheets[1].cells.get("A1")!;
     expect(cell.error).toBeFalsy();
     expect(cell.result).toEqual({ kind: "scalar", value: 99 });
+  });
+});
+
+describe("sensitivity analysis", () => {
+  it("spearman correlation of identical arrays is 1", () => {
+    const a = new Float64Array([1, 2, 3, 4, 5]);
+    expect(spearmanCorrelation(a, a)).toBeCloseTo(1, 5);
+  });
+
+  it("spearman correlation of reversed array is -1", () => {
+    const a = new Float64Array([1, 2, 3, 4, 5]);
+    const b = new Float64Array([5, 4, 3, 2, 1]);
+    expect(spearmanCorrelation(a, b)).toBeCloseTo(-1, 5);
+  });
+
+  it("collectInputs finds distribution sources", () => {
+    const sheet = makeSheet({
+      A1: "Normal(100, 10)",
+      A2: "Normal(50, 5)",
+      A3: "= A1 + A2",
+    });
+    const inputs = collectInputs("A3", 0, [sheet]);
+    expect(inputs.length).toBe(2);
+    expect(inputs.map((i) => i.addr).sort()).toEqual(["A1", "A2"]);
+    expect(inputs.every((i) => !i.isScalar)).toBe(true);
+  });
+
+  it("collectInputs includes scalars", () => {
+    const sheet = makeSheet({
+      A1: "1000",
+      A2: "Normal(50, 5)",
+      A3: "= A1 * A2",
+    });
+    const inputs = collectInputs("A3", 0, [sheet]);
+    expect(inputs.length).toBe(2);
+    const scalar = inputs.find((i) => i.addr === "A1");
+    expect(scalar?.isScalar).toBe(true);
+  });
+
+  it("collectInputs labels variables", () => {
+    const sheet = makeSheet({
+      A1: "income = Normal(5000, 500)",
+      A2: "= income * 12",
+    });
+    const inputs = collectInputs("A2", 0, [sheet]);
+    expect(inputs.length).toBe(1);
+    expect(inputs[0].label).toBe("income");
+  });
+
+  it("collectInputs skips intermediate formulas", () => {
+    const sheet = makeSheet({
+      A1: "Normal(100, 10)",
+      A2: "Normal(50, 5)",
+      A3: "= A1 + A2",       // intermediate
+      A4: "= A3 * 2",        // output
+    });
+    const inputs = collectInputs("A4", 0, [sheet]);
+    // Should find A1 and A2, not A3
+    expect(inputs.map((i) => i.addr).sort()).toEqual(["A1", "A2"]);
   });
 });
 
