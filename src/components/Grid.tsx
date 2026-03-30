@@ -471,11 +471,21 @@ function CellDisplay({ cell }: { cell: Cell | undefined }) {
   const stats = summarize(cell.result);
   const uncertainty = uncertaintyFraction(stats.mean, stats.std);
 
-  // Interpolate from white (scalar-like) to distribution teal
-  const r = Math.round(232 + (78 - 232) * uncertainty);   // e8 → 4e
-  const g = Math.round(232 + (205 - 232) * uncertainty);  // e8 → cd
-  const b = Math.round(248 + (196 - 248) * uncertainty);  // f8 → c4
-  const color = `rgb(${r}, ${g}, ${b})`;
+  // Two-stop color ramp: white → warm orange (u=0.5) → angry red (u=1.0)
+  const u = uncertainty;
+  let r_, g_, b_;
+  if (u <= 0.5) {
+    const t = u * 2; // 0→1 over first half
+    r_ = Math.round(232 + (230 - 232) * t);  // e8 → e6
+    g_ = Math.round(232 + (130 - 232) * t);  // e8 → 82
+    b_ = Math.round(248 + (60 - 248) * t);   // f8 → 3c
+  } else {
+    const t = (u - 0.5) * 2; // 0→1 over second half
+    r_ = Math.round(230 + (220 - 230) * t);  // e6 → dc
+    g_ = Math.round(130 + (50 - 130) * t);   // 82 → 32
+    b_ = Math.round(60 + (45 - 60) * t);     // 3c → 2d
+  }
+  const color = `rgb(${r_}, ${g_}, ${b_})`;
 
   return (
     <span className="cell-distribution" style={{ color }} title={`P5: ${formatNumber(stats.p5)} | P95: ${formatNumber(stats.p95)}`}>
