@@ -202,67 +202,6 @@ function globalCellDeps(
   return deps;
 }
 
-/** Topological sort. Assumes no cycles (caller must check beforehand). */
-function topoSort(
-  cells: Map<CellAddress, Cell>,
-  varMap: Map<string, CellAddress>
-): CellAddress[] {
-  const order: CellAddress[] = [];
-  const visited = new Set<CellAddress>();
-
-  function visit(addr: CellAddress) {
-    if (visited.has(addr)) return;
-    visited.add(addr);
-
-    const cell = cells.get(addr);
-    if (cell) {
-      for (const dep of cellDeps(cell, varMap)) {
-        visit(dep);
-      }
-    }
-
-    order.push(addr);
-  }
-
-  for (const addr of cells.keys()) {
-    visit(addr);
-  }
-
-  return order;
-}
-
-/**
- * Check whether adding/updating a cell at `addr` with the given deps
- * would create a cycle. Walks forward from `addr`'s dependencies to see
- * if any path leads back to `addr`.
- */
-function wouldCycle(
-  addr: CellAddress,
-  newDeps: CellAddress[],
-  cells: Map<CellAddress, Cell>,
-  varMap: Map<string, CellAddress>
-): boolean {
-  // DFS from each direct dependency — can we reach `addr`?
-  const visited = new Set<CellAddress>();
-
-  function canReach(current: CellAddress): boolean {
-    if (current === addr) return true;
-    if (visited.has(current)) return false;
-    visited.add(current);
-
-    const cell = cells.get(current);
-    if (!cell) return false;
-    for (const dep of cellDeps(cell, varMap)) {
-      if (canReach(dep)) return true;
-    }
-    return false;
-  }
-
-  for (const dep of newDeps) {
-    if (canReach(dep)) return true;
-  }
-  return false;
-}
 
 /** Apply a binary operation elementwise, handling scalar/samples mixing */
 function binOp(
@@ -677,93 +616,6 @@ function evalCell(
   }
 }
 
-/** Build reverse dependency map: for each cell, which cells depend on it? */
-function buildReverseDeps(
-  cells: Map<CellAddress, Cell>,
-  varMap: Map<string, CellAddress>
-): Map<CellAddress, Set<CellAddress>> {
-  const rev = new Map<CellAddress, Set<CellAddress>>();
-  for (const [addr, cell] of cells) {
-    for (const dep of cellDeps(cell, varMap)) {
-      let set = rev.get(dep);
-      if (!set) {
-        set = new Set();
-        rev.set(dep, set);
-      }
-      set.add(addr);
-    }
-  }
-  return rev;
-}
-
-/** Collect all downstream dependents of a set of dirty cells (BFS). */
-function collectDirty(
-  roots: CellAddress[],
-  reverseDeps: Map<CellAddress, Set<CellAddress>>
-): Set<CellAddress> {
-  const dirty = new Set<CellAddress>(roots);
-  const queue = [...roots];
-  while (queue.length > 0) {
-    const addr = queue.shift()!;
-    const dependents = reverseDeps.get(addr);
-    if (dependents) {
-      for (const dep of dependents) {
-        if (!dirty.has(dep)) {
-          dirty.add(dep);
-          queue.push(dep);
-        }
-      }
-    }
-  }
-  return dirty;
-}
-
-/**
- * Topological sort with cycle detection for bulk operations.
- * Returns { order, cycleAddrs } where cycleAddrs contains cells that are
- * part of or depend on a cycle.
- */
-function topoSortWithCycles(
-  cells: Map<CellAddress, Cell>,
-  varMap: Map<string, CellAddress>
-): { order: CellAddress[]; cycleAddrs: Set<CellAddress> } {
-  const order: CellAddress[] = [];
-  const visited = new Set<CellAddress>();
-  const visiting = new Set<CellAddress>();
-  const cycleAddrs = new Set<CellAddress>();
-
-  function visit(addr: CellAddress): boolean {
-    if (cycleAddrs.has(addr)) return false;
-    if (visited.has(addr)) return true;
-    if (visiting.has(addr)) {
-      cycleAddrs.add(addr);
-      return false;
-    }
-    visiting.add(addr);
-
-    const cell = cells.get(addr);
-    if (cell) {
-      for (const dep of cellDeps(cell, varMap)) {
-        if (!visit(dep)) {
-          cycleAddrs.add(addr);
-          visiting.delete(addr);
-          return false;
-        }
-      }
-    }
-
-    visiting.delete(addr);
-    visited.add(addr);
-    order.push(addr);
-    return true;
-  }
-
-  for (const addr of cells.keys()) {
-    visit(addr);
-  }
-
-  return { order, cycleAddrs };
-}
 
 // ─── Multi-sheet helpers ─────────────────────────────────────────────
 
@@ -1273,30 +1125,6 @@ function hasInlineDistribution(expr: Expr): boolean {
   }
 }
 
-/** Extract descriptions of inline distribution calls from an expression */
-function collectInlineDistCalls(expr: Expr): string[] {
-  const results: string[] = [];
-  function walk(e: Expr) {
-    switch (e.type) {
-      case "funcCall":
-        if (DISTRIBUTION_CONSTRUCTORS.has(e.name)) {
-          // Format: capitalize name, show literal number args
-          const name = e.name.charAt(0).toUpperCase() + e.name.slice(1);
-          const args = e.args.map((a) => a.type === "number" ? String(a.value) : "...");
-          results.push(`${name}(${args.join(", ")})`);
-          return; // don't recurse into dist constructor args
-        }
-        e.args.forEach(walk);
-        break;
-      case "binOp": walk(e.left); walk(e.right); break;
-      case "unaryMinus": walk(e.operand); break;
-      default: break;
-    }
-  }
-  walk(expr);
-  return results;
-}
-
 /** An input cell for sensitivity analysis */
 export interface SensitivityInput {
   sheetIndex: number;
@@ -1599,7 +1427,9 @@ export function computeTornado(
     if (inp.isInline) {
       // Can't do one-at-a-time override for inline distributions
       // Estimate swing from correlation and output P5-P95 range
-      const r = spearmanCorrelation(inp.result.values, outputCell.result!.values);
+      const inpValues = inp.result.kind === "samples" ? inp.result.values : new Float64Array(0);
+      const outValues = outputCell.result!.kind === "samples" ? outputCell.result!.values : new Float64Array(0);
+      const r = spearmanCorrelation(inpValues, outValues);
       const outputStats = summarize(outputCell.result!);
       const outputRange = outputStats.p95 - outputStats.p5;
       const swing = Math.abs(r) * outputRange / 2;

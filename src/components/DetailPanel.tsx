@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import type { Cell, Sheet } from "../engine/types";
-import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, type SensitivityInput } from "../engine/evaluate";
+import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado } from "../engine/evaluate";
 import { formatNumber } from "../format";
 
 export interface LockedRange {
@@ -57,7 +57,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
       return stats.std > 0 ? (v - stats.mean) / stats.std : 0;
     }
     if (rangeUnit === "percentile") {
-      if (result.kind !== "samples") return 50;
+      if (!result || result.kind !== "samples") return 50;
       const vals = result.values;
       let count = 0;
       for (let i = 0; i < vals.length; i++) {
@@ -74,7 +74,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
       return stats.mean + d * stats.std;
     }
     if (rangeUnit === "percentile") {
-      if (result.kind !== "samples") return stats.mean;
+      if (!result || result.kind !== "samples") return stats.mean;
       const sorted = new Float64Array(result.values).sort();
       const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((d / 100) * (sorted.length - 1))));
       return sorted[idx];
@@ -224,7 +224,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
                   : rangeStep;
                 function handleDisplayInput(which: "min" | "max", value: string) {
                   const num = Number(value);
-                  if (isNaN(num)) return;
+                  if (isNaN(num) || !lockedRange) return;
                   const natural = roundForDisplay(fromDisplayUnit(num));
                   onLockRange({
                     ...lockedRange,

@@ -267,10 +267,15 @@ class Parser {
     return this.tokens[this.pos++];
   }
 
+  private peekOp(): string | null {
+    const tok = this.peek();
+    return tok?.type === "op" ? tok.value : null;
+  }
+
   /** expr = term (('+' | '-') term)* */
   parseExpression(): Expr {
     let left = this.parseTerm();
-    while (this.peek()?.type === "op" && (this.peek()!.value === "+" || this.peek()!.value === "-")) {
+    while (this.peekOp() === "+" || this.peekOp() === "-") {
       const op = this.advance() as { type: "op"; value: string };
       const right = this.parseTerm();
       left = { type: "binOp", op: op.value as "+" | "-", left, right };
@@ -281,7 +286,7 @@ class Parser {
   /** term = unary (('*' | '/') unary)* */
   private parseTerm(): Expr {
     let left = this.parseUnary();
-    while (this.peek()?.type === "op" && (this.peek()!.value === "*" || this.peek()!.value === "/")) {
+    while (this.peekOp() === "*" || this.peekOp() === "/") {
       const op = this.advance() as { type: "op"; value: string };
       const right = this.parseUnary();
       left = { type: "binOp", op: op.value as "*" | "/", left, right };
@@ -291,7 +296,7 @@ class Parser {
 
   /** unary = '-' unary | primary */
   private parseUnary(): Expr {
-    if (this.peek()?.type === "op" && this.peek()!.value === "-") {
+    if (this.peekOp() === "-") {
       this.advance();
       const operand = this.parseUnary();
       return { type: "unaryMinus", operand };
