@@ -14,7 +14,7 @@ interface ClipboardData {
 }
 
 const NUM_COLS = 26;
-const NUM_ROWS = 50;
+const NUM_ROWS = 200;
 
 function colLabel(col: number): string {
   return String.fromCharCode(65 + col);
@@ -65,6 +65,29 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
     setEditingAddrRaw(null);
     setEditingInBar(false);
   }
+  // Scroll active cell into view
+  useEffect(() => {
+    if (!selectedAddr || !gridRef.current) return;
+    const scrollContainer = gridRef.current.querySelector(".grid-scroll") as HTMLElement | null;
+    const td = gridRef.current.querySelector(`td[data-addr="${selectedAddr}"]`) as HTMLElement | null;
+    if (!scrollContainer || !td) return;
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const tdRect = td.getBoundingClientRect();
+    // Account for sticky header and row-header column
+    const headerHeight = scrollContainer.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+    const visibleTop = containerRect.top + headerHeight;
+    if (tdRect.top < visibleTop) {
+      scrollContainer.scrollTop -= visibleTop - tdRect.top;
+    } else if (tdRect.bottom > containerRect.bottom) {
+      scrollContainer.scrollTop += tdRect.bottom - containerRect.bottom;
+    }
+    if (tdRect.left < containerRect.left) {
+      scrollContainer.scrollLeft -= containerRect.left - tdRect.left;
+    } else if (tdRect.right > containerRect.right) {
+      scrollContainer.scrollLeft += tdRect.right - containerRect.right;
+    }
+  }, [selectedAddr]);
+
   const [lockedRange, setLockedRange] = useState<LockedRange | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const barInputRef = useRef<HTMLInputElement>(null);
@@ -406,6 +429,40 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
         } else {
           setSelAnchor(null);
         }
+        return;
+      }
+      // PageUp / PageDown: jump by visible page height
+      if (e.key === "PageUp" || e.key === "PageDown") {
+        e.preventDefault();
+        const parsed = parseAddress(selectedAddr);
+        if (!parsed) return;
+        const scrollContainer = gridRef.current?.querySelector(".grid-scroll") as HTMLElement | null;
+        let pageRows = 36;
+        if (scrollContainer) {
+          const headerHeight = scrollContainer.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+          const visibleHeight = scrollContainer.clientHeight - headerHeight;
+          const rowHeight = 26; // 24px height + 2px border
+          pageRows = Math.max(1, Math.floor(visibleHeight / rowHeight));
+        }
+        const newRow = e.key === "PageUp"
+          ? Math.max(0, parsed.row - pageRows)
+          : Math.min(NUM_ROWS - 1, parsed.row + pageRows);
+        const newAddr = toAddress(parsed.col, newRow);
+        setSelectedAddr(newAddr);
+        setSelAnchor(null);
+        // Position so the new row is at top (PageDown) or bottom (PageUp) of view
+        requestAnimationFrame(() => {
+          const td = gridRef.current?.querySelector(`td[data-addr="${newAddr}"]`) as HTMLElement | null;
+          if (!scrollContainer || !td) return;
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const headerHeight = scrollContainer.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+          const tdRect = td.getBoundingClientRect();
+          if (e.key === "PageDown") {
+            scrollContainer.scrollTop += tdRect.top - containerRect.top - headerHeight;
+          } else {
+            scrollContainer.scrollTop += tdRect.bottom - containerRect.bottom;
+          }
+        });
         return;
       }
       // Delete/Backspace: clear selected cell(s)

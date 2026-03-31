@@ -13,7 +13,7 @@ const PAGES = [
               <tr><td>Enter / F2</td><td>Edit existing content</td></tr>
               <tr><td>Delete / Backspace</td><td>Clear cell(s)</td></tr>
               <tr><td>Escape</td><td>Cancel edit / deselect</td></tr>
-              <tr><td>Arrow keys</td><td>Navigate</td></tr>
+              <tr><td>Arrow / PgUp / PgDn keys</td><td>Navigate</td></tr>
               <tr><td>Shift + Arrow</td><td>Extend selection</td></tr>
               <tr><td>Tab</td><td>Commit &amp; move right</td></tr>
               <tr><td>Ctrl+C / Ctrl+X</td><td>Copy / cut</td></tr>
