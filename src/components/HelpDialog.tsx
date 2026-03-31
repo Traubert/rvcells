@@ -21,6 +21,8 @@ const PAGES = [
               <tr><td>Ctrl+V</td><td>Paste</td></tr>
               <tr><td>Ctrl+R</td><td>Recalculate cell &amp; dependents</td></tr>
               <tr><td>Ctrl+Shift+R</td><td>Recalculate all sheets</td></tr>
+              <tr><td>Ctrl+S</td><td>Save to browser storage</td></tr>
+              <tr><td>Ctrl+O</td><td>Open from browser storage</td></tr>
               <tr><td>Ctrl+H</td><td>This help screen</td></tr>
             </tbody>
           </table>

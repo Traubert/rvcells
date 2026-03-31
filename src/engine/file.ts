@@ -1,11 +1,12 @@
 import type { Sheet, CellAddress } from "./types";
 import { parseCell } from "./parser";
 import { recalculateAllBulk, createSheet } from "./evaluate";
+import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "../constants";
 
 /** On-disk format */
 export interface FileFormat {
   version: number;
-  name?: string; // v1 compat: workbook-level name
+  name?: string;
   settings: {
     numSamples: number;
   };
@@ -21,7 +22,7 @@ export function serializeFile(sheets: Sheet[], name: string): FileFormat {
     version: 2,
     name,
     settings: {
-      numSamples: sheets[0]?.numSamples ?? 10_000,
+      numSamples: sheets[0]?.numSamples ?? DEFAULT_NUM_SAMPLES,
     },
     sheets: sheets.map((sheet) => {
       const cells: Record<string, string> = {};
@@ -35,8 +36,8 @@ export function serializeFile(sheets: Sheet[], name: string): FileFormat {
 
 /** Deserialize a file into a name and array of sheets. */
 export function deserializeFile(file: FileFormat): { name: string; sheets: Sheet[] } {
-  const numSamples = file.settings?.numSamples ?? 10_000;
-  const fileName = file.name || "Untitled file";
+  const numSamples = file.settings?.numSamples ?? DEFAULT_NUM_SAMPLES;
+  const fileName = file.name || DEFAULT_WORKBOOK_NAME;
 
   if (!file.sheets?.length) {
     return { name: fileName, sheets: [createSheet(numSamples)] };
@@ -46,11 +47,11 @@ export function deserializeFile(file: FileFormat): { name: string; sheets: Sheet
   const usedNames = new Set<string>();
   let nextNum = 1;
   const sheets = file.sheets.map((sheetData) => {
-    let name = sheetData.name || "Untitled sheet";
+    let name = sheetData.name || DEFAULT_SHEET_NAME;
     if (usedNames.has(name)) {
       // Find a unique name
-      while (usedNames.has(`Untitled sheet ${nextNum}`)) nextNum++;
-      name = `Untitled sheet ${nextNum}`;
+      while (usedNames.has(`${DEFAULT_SHEET_NAME} ${nextNum}`)) nextNum++;
+      name = `${DEFAULT_SHEET_NAME} ${nextNum}`;
       nextNum++;
     }
     usedNames.add(name);
@@ -83,8 +84,9 @@ export function saveToFile(sheets: Sheet[], name: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** Open a file picker and load sheets. Returns null if user cancels. */
-export function openFromFile(): Promise<{ name: string; sheets: Sheet[] } | null> {
+/** Open a file picker and load sheets. Returns null if user cancels.
+ *  On parse failure, returns { error } with a user-facing message. */
+export function openFromFile(): Promise<{ name: string; sheets: Sheet[] } | { error: string } | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -98,13 +100,12 @@ export function openFromFile(): Promise<{ name: string; sheets: Sheet[] } | null
       try {
         const text = await file.text();
         const data = JSON.parse(text) as FileFormat;
-        if ((data.version !== 1 && data.version !== 2) || !Array.isArray(data.sheets)) {
-          throw new Error("Invalid file format");
+        if (data.version !== 2 || !Array.isArray(data.sheets)) {
+          throw new Error("not a valid rvcells file");
         }
         resolve(deserializeFile(data));
-      } catch (e) {
-        alert(`Failed to load file: ${(e as Error).message}`);
-        resolve(null);
+      } catch {
+        resolve({ error: `Could not parse "${file.name}" — skipping.` });
       }
     };
     input.click();

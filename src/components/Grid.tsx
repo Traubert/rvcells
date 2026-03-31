@@ -44,9 +44,11 @@ interface GridProps {
   sheetIndex: number;
   onSheetChange: () => void;
   onShowHelp?: () => void;
+  onSave?: () => void;
+  onOpen?: () => void;
 }
 
-export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }: GridProps) {
+export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, onSave, onOpen }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
@@ -359,8 +361,22 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
 
   const handleGridKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (editingAddr) return;
       const ctrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl+S: save (works even while editing)
+      if (ctrl && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        onSave?.();
+        return;
+      }
+      // Ctrl+O: open (works even while editing)
+      if (ctrl && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        onOpen?.();
+        return;
+      }
+
+      if (editingAddr) return;
 
       if (!selectedAddr) return;
 
@@ -462,7 +478,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp }
         return;
       }
     },
-    [editingAddr, selectedAddr, selAnchor, sheet, allSheets, sheetIndex, onSheetChange, copySelection]
+    [editingAddr, selectedAddr, selAnchor, sheet, allSheets, sheetIndex, onSheetChange, copySelection, onSave, onOpen]
   );
 
   const selBounds = selectionBounds(selectedAddr, selAnchor);

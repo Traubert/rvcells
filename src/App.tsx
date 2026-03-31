@@ -1,54 +1,185 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Grid } from "./components/Grid";
 import { TabBar } from "./components/TabBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { OpenDialog } from "./components/OpenDialog";
 import { createSheet, recalculateAll, recalculateAllBulk, renameSheet, findRefsToSheet } from "./engine/evaluate";
-import { saveToFile, openFromFile } from "./engine/file";
+import { saveToFile, openFromFile, serializeFile, deserializeFile } from "./engine/file";
+import { storageAvailable, saveWorkbook, loadWorkbook, listWorkbooks, generateId, uniqueWorkbookName, exportAllAsZip, importFromZip } from "./engine/storage";
+import type { WorkbookEntry } from "./engine/storage";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import type { Sheet } from "./engine/types";
+import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "./constants";
 import "./App.css";
 
 function nextUntitledName(sheets: Sheet[]): string {
   const names = new Set(sheets.map((s) => s.name));
-  if (!names.has("Untitled sheet")) return "Untitled sheet";
+  if (!names.has(DEFAULT_SHEET_NAME)) return DEFAULT_SHEET_NAME;
   for (let i = 2; ; i++) {
-    const name = `Untitled sheet ${i}`;
+    const name = `${DEFAULT_SHEET_NAME} ${i}`;
     if (!names.has(name)) return name;
   }
 }
 
 export default function App() {
-  const sheetsRef = useRef<Sheet[]>([createSheet(10_000)]);
-  const nameRef = useRef("Untitled file");
+  const sheetsRef = useRef<Sheet[]>([createSheet(DEFAULT_NUM_SAMPLES)]);
+  const nameRef = useRef(DEFAULT_WORKBOOK_NAME);
+  const workbookIdRef = useRef<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [, setVersion] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [openDialogOpen, setOpenDialogOpen] = useState(false);
+  const [openDialogWorkbooks, setOpenDialogWorkbooks] = useState<WorkbookEntry[]>([]);
   const [confirmDelete, setConfirmDelete] = useState<{ index: number; message: string } | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  const [saveFlash, setSaveFlash] = useState(false);
+  const [renameNotice, setRenameNotice] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const bump = useCallback(() => setVersion((v) => v + 1), []);
+
+  // Check storage availability on mount
+  useEffect(() => {
+    const check = storageAvailable();
+    if (!check.ok) {
+      setStorageWarning(check.reason!);
+    }
+  }, []);
 
   const activeSheet = sheetsRef.current[activeIndex];
 
   const handleSheetChange = bump;
 
-  const handleSave = useCallback(() => {
+  /** Show a rename notice that auto-dismisses after 4 seconds. Reusable for mass import. */
+  const showRenameNotice = useCallback((renames: Array<{ from: string; to: string }>) => {
+    if (renames.length === 0) return;
+    if (renames.length === 1) {
+      setRenameNotice(`Renamed "${renames[0].from}" to "${renames[0].to}" to avoid a name conflict.`);
+    } else {
+      setRenameNotice(`Renamed ${renames.length} files to avoid name conflicts.`);
+    }
+    setTimeout(() => setRenameNotice(null), 4000);
+  }, []);
+
+  // New file
+  const handleNewFile = useCallback(() => {
+    setMenuOpen(false);
+    const name = uniqueWorkbookName(DEFAULT_WORKBOOK_NAME);
+    const numSamples = sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES;
+    sheetsRef.current = [createSheet(numSamples)];
+    nameRef.current = name;
+    workbookIdRef.current = null;
+    setActiveIndex(0);
+    bump();
+  }, [bump]);
+
+  // Save to browser storage
+  const handleStorageSave = useCallback(() => {
+    setMenuOpen(false);
+    const check = storageAvailable();
+    if (!check.ok) {
+      setStorageWarning(check.reason!);
+      return;
+    }
+    if (!workbookIdRef.current) {
+      workbookIdRef.current = generateId();
+    }
+    const data = serializeFile(sheetsRef.current, nameRef.current);
+    const result = saveWorkbook(workbookIdRef.current, nameRef.current, data);
+    if (!result.ok) {
+      setStorageWarning(result.reason!);
+    } else {
+      setStorageWarning(null);
+      setSaveFlash(true);
+      setTimeout(() => setSaveFlash(false), 1500);
+    }
+  }, []);
+
+  // Open from browser storage
+  const handleStorageOpen = useCallback(() => {
+    setMenuOpen(false);
+    const check = storageAvailable();
+    if (!check.ok) {
+      setStorageWarning(check.reason!);
+      return;
+    }
+    setOpenDialogWorkbooks(listWorkbooks());
+    setOpenDialogOpen(true);
+  }, []);
+
+  const handleOpenWorkbook = useCallback((id: string) => {
+    const data = loadWorkbook(id);
+    if (!data) {
+      setImportError("Failed to load workbook from browser storage.");
+      setOpenDialogOpen(false);
+      return;
+    }
+    const result = deserializeFile(data);
+    sheetsRef.current = result.sheets;
+    nameRef.current = result.name;
+    workbookIdRef.current = id;
+    setActiveIndex(0);
+    setOpenDialogOpen(false);
+    bump();
+  }, [bump]);
+
+  // File export (download)
+  const handleExport = useCallback(() => {
     saveToFile(sheetsRef.current, nameRef.current);
     setMenuOpen(false);
   }, []);
 
-  const handleOpen = useCallback(async () => {
+  // File import (upload)
+  const handleImport = useCallback(async () => {
     setMenuOpen(false);
     const result = await openFromFile();
-    if (result) {
-      sheetsRef.current = result.sheets;
-      nameRef.current = result.name;
-      setActiveIndex(0);
-      bump();
+    if (!result) return;
+    if ("error" in result) {
+      setImportError(result.error);
+      return;
     }
-  }, [bump]);
+    sheetsRef.current = result.sheets;
+    const uniqueName = uniqueWorkbookName(result.name);
+    if (uniqueName !== result.name) {
+      showRenameNotice([{ from: result.name, to: uniqueName }]);
+    }
+    nameRef.current = uniqueName;
+    workbookIdRef.current = null; // imported file has no storage id yet
+    setActiveIndex(0);
+    bump();
+  }, [bump, showRenameNotice]);
+
+  // Mass export all saved workbooks as zip
+  const handleMassExport = useCallback(async () => {
+    setMenuOpen(false);
+    const error = await exportAllAsZip();
+    if (error) setImportError(error);
+  }, []);
+
+  // Mass import workbooks from zip
+  const handleMassImport = useCallback(async () => {
+    setMenuOpen(false);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const result = await importFromZip(file);
+      if (result.errors.length > 0) {
+        setImportError(result.errors.join(" "));
+      }
+      if (result.imported > 0) {
+        showRenameNotice(result.renames);
+        setSaveFlash(true);
+        setTimeout(() => setSaveFlash(false), 1500);
+      }
+    };
+    input.click();
+  }, [showRenameNotice]);
 
   const handleNameChange = useCallback((name: string) => {
     nameRef.current = name;
@@ -105,7 +236,7 @@ export default function App() {
 
   const handleTabAdd = useCallback(() => {
     const name = nextUntitledName(sheetsRef.current);
-    const numSamples = sheetsRef.current[0]?.numSamples ?? 10_000;
+    const numSamples = sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES;
     sheetsRef.current.push(createSheet(numSamples, name));
     setActiveIndex(sheetsRef.current.length - 1);
     bump();
@@ -123,8 +254,14 @@ export default function App() {
           </button>
           {menuOpen && (
             <div className="menu-dropdown">
-              <button className="menu-item" onClick={handleOpen}>Import</button>
-              <button className="menu-item" onClick={handleSave}>Export</button>
+              <button className="menu-item" onClick={handleNewFile}>New</button>
+              <button className="menu-item" onClick={handleStorageOpen}>Open<span className="menu-shortcut">Ctrl+O</span></button>
+              <button className="menu-item" onClick={handleStorageSave}>Save<span className="menu-shortcut">Ctrl+S</span></button>
+              <div className="menu-divider" />
+              <button className="menu-item" onClick={handleImport}>Import from file</button>
+              <button className="menu-item" onClick={handleExport}>Export as file</button>
+              <button className="menu-item" onClick={handleMassImport}>Import all from zip</button>
+              <button className="menu-item" onClick={handleMassExport}>Export all as zip</button>
               <div className="menu-divider" />
               <button className="menu-item" onClick={() => { setSettingsOpen(true); setMenuOpen(false); }}>Settings</button>
               <button className="menu-item" onClick={() => { setHelpOpen(true); setMenuOpen(false); }}>Help</button>
@@ -138,7 +275,21 @@ export default function App() {
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
           spellCheck={false}
         />
+        {saveFlash && <span className="save-flash">Saved</span>}
+        {renameNotice && <span className="rename-notice">{renameNotice}</span>}
       </header>
+      {storageWarning && (
+        <div className="storage-warning">
+          ⚠ {storageWarning} Your work exists only in this tab. Use Export to save a file.
+          <button className="storage-warning-dismiss" onClick={() => setStorageWarning(null)}>×</button>
+        </div>
+      )}
+      {importError && (
+        <div className="import-error-banner">
+          {importError}
+          <button className="storage-warning-dismiss" onClick={() => setImportError(null)}>×</button>
+        </div>
+      )}
       <TabBar
         sheets={sheetsRef.current}
         activeIndex={activeIndex}
@@ -153,6 +304,8 @@ export default function App() {
         sheetIndex={activeIndex}
         onSheetChange={handleSheetChange}
         onShowHelp={() => setHelpOpen(true)}
+        onSave={handleStorageSave}
+        onOpen={handleStorageOpen}
       />
       {helpOpen && (
         <HelpDialog onClose={() => setHelpOpen(false)} />
@@ -162,6 +315,15 @@ export default function App() {
           numSamples={activeSheet.numSamples}
           onSave={handleSettingsSave}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      {openDialogOpen && (
+        <OpenDialog
+          workbooks={openDialogWorkbooks}
+          currentId={workbookIdRef.current}
+          onOpen={handleOpenWorkbook}
+          onClose={() => setOpenDialogOpen(false)}
+          onRefresh={() => setOpenDialogWorkbooks(listWorkbooks())}
         />
       )}
       {confirmDelete && (

@@ -2,6 +2,7 @@ import type { Cell, CellAddress, CellResult, Expr, Sheet } from "./types";
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
+import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
 
 /** Names of distribution constructor functions.
  *  Keep in sync with the cases in evalFunc — if you add a distribution there, add it here. */
@@ -1045,7 +1046,7 @@ export function resolveReference(
 }
 
 /** Create an empty sheet */
-export function createSheet(numSamples = 10_000, name = "Untitled sheet"): Sheet {
+export function createSheet(numSamples = DEFAULT_NUM_SAMPLES, name = DEFAULT_SHEET_NAME): Sheet {
   return { name, cells: new Map(), numSamples };
 }
 
@@ -1523,7 +1524,7 @@ export function computeTornado(
  *  Samples outside the fixed range are clamped into the edge bins. */
 export function histogram(
   result: CellResult,
-  numBins = 50,
+  numBins = DEFAULT_NUM_HISTOGRAM_BINS,
   fixedMin?: number,
   fixedMax?: number,
 ): { min: number; max: number; bins: number[]; binWidth: number } {

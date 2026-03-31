@@ -65,7 +65,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Lockable histogram range with zoom +/− and recentre controls
 - [x] Uncertainty-based cell coloring (CV → white-to-orange-to-red interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
-- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+H help
+- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+S save, Ctrl+O open, Ctrl+H help
 - [x] Settings dialog (global sample count)
 - [x] Help dialog (two pages: basics and functions)
 - [x] File naming (editable in header, used as export filename)
@@ -80,6 +80,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Histogram guidelines (σ and percentile modes)
 - [x] Range unit selector (value, σ, percentile) for locked range
 - [x] Distribution comparison: overlay another cell's histogram (orange) with side-by-side stats
+- [ ] Consider: Pareto distribution, Poisson distribution, logistic distribution, log-logistic distribution
 
 ### P1 — analysis
 - [x] Correlation tab: Spearman rank correlation of each distribution input with the output
@@ -92,7 +93,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 
 ### P2 — usability
 - [x] Import/export spreadsheet as JSON file (browser download/upload)
-- [ ] Save/load to browser storage
+- [x] Save/load to browser storage (localStorage with manual index)
+  - [x] Mass export/import as zip bundle of all saved workbooks
 - [ ] Undo/redo
 - [ ] Cell formatting (labels, number formats)
 - [ ] Functions on ranges: SUM, MEAN, etc.

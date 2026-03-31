@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import type { Cell, Sheet } from "../engine/types";
 import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, resolveReference } from "../engine/evaluate";
 import { formatNumber } from "../format";
+import { DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
 
 export interface LockedRange {
   min: number;
@@ -74,7 +75,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   const [compareRef, setCompareRef] = useState<string>(""); // committed reference
   const [compareError, setCompareError] = useState(false);
   const compareInputRef = useRef<HTMLInputElement>(null);
-  const [binCount, setBinCount] = useState(60);
+  const [binCount, setBinCount] = useState(DEFAULT_NUM_HISTOGRAM_BINS);
 
   const stats = useMemo(() => summarize(result), [result]);
   const autoHist = useMemo(() => histogram(result, binCount), [result, binCount]);
