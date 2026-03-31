@@ -45,7 +45,7 @@ A cell can optionally define a **named variable** by prefixing the content with 
 The dependency graph is a DAG evaluated in topological order across all sheets (global topo sort). Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents (including cross-sheet) are re-evaluated. Duplicate variable names are detected and errored (first definition wins).
 
 ### Display
-Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, warm orange → red = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells.
+Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, warm orange → red = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells. Sensitivity tabs (Correlation, Variance, Tornado) only appear for formulas with 2+ distribution inputs. The Timeline tab only appears for Chain cells. When switching between cells, the active tab resets if no longer applicable.
 
 ## Feature List (prototype)
 
@@ -65,7 +65,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Distribution constructors usable in formulas (e.g. `= Normal(100, 10) * 12`)
 - [x] Incremental recalculation (only dirty cells and dependents)
 - [x] Histogram hover showing per-bin percentage
-- [x] Lockable histogram range with zoom +/− and recentre controls
+- [x] Lockable histogram range with zoom +/−, reset, and scroll wheel zoom
 - [x] Uncertainty-based cell coloring (CV → white-to-orange-to-red interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
 - [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+S save, Ctrl+O open, Ctrl+H help
@@ -82,7 +82,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Chain(body, init): iterative process with lazy evaluation, auto-resample, cross-chain sync
 - [x] ChainIndex(chain, step): access distribution at a specific chain step
 - [x] `_t` contextual variable inside Chain bodies (current step number)
-- [x] Timeline fan chart in detail panel for Chain cells with step navigation and comparison overlay
+- [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls)
 - [x] Resizable detail panel (drag handle)
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete
 - [x] Histogram guidelines (σ and percentile modes)
@@ -93,7 +93,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Correlation tab: Spearman rank correlation of each distribution input with the output
 - [x] Variance tab: r² variance contribution for each input
 - [x] Tornado tab: one-at-a-time P5/P95 sweep with directional coloring (green=input high, red=input low)
-- [x] Inline distribution sample capture for sensitivity analysis of formulas with embedded distributions
+- [x] Inline distribution sample capture for sensitivity analysis of formulas with embedded distributions (including Chain body)
 - [x] Deterministic mode for tornado evaluation (distribution constructors return expected values)
 - [x] Percentile display (P5, P25, P50, P75, P95) in the detail panel
 - [ ] Conditional formatting / heatmap coloring based on variance or spread

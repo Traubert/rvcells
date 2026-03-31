@@ -1498,7 +1498,59 @@ export function collectInputs(
     }
   }
 
+  // For Chain cells, the body is stored but not evaluated during the main DAG pass,
+  // so inlineSamples won't contain body distributions. Detect them from the expression.
+  if (outputCell.chainBody) {
+    const bodyLabels = collectInlineDistLabels(outputCell.chainBody);
+    for (const label of bodyLabels) {
+      // Avoid duplicates if somehow already captured
+      if (!inputs.some(inp => inp.isInline && inp.label === label)) {
+        inputs.push({
+          sheetIndex: outputSheetIdx,
+          addr: outputAddr,
+          label,
+          detail: `inline in Chain body`,
+          result: { kind: "scalar", value: 0 }, // placeholder — no samples available
+          isScalar: false,
+          isInline: true,
+        });
+      }
+    }
+  }
+
   return inputs;
+}
+
+/** Extract labels for inline distribution constructors from an expression */
+function collectInlineDistLabels(expr: Expr): string[] {
+  const labels: string[] = [];
+  function walk(e: Expr) {
+    switch (e.type) {
+      case "number":
+      case "cellRef":
+      case "varRef":
+      case "sheetCellRef":
+      case "sheetVarRef":
+        break;
+      case "binOp":
+        walk(e.left);
+        walk(e.right);
+        break;
+      case "unaryMinus":
+        walk(e.operand);
+        break;
+      case "funcCall":
+        if (SAMPLE_CONSTRUCTORS.has(e.name)) {
+          // Build label like "Normal(100, 10)"
+          const argStrs = e.args.map(a => a.type === "number" ? String(a.value) : "…");
+          labels.push(`${e.name.charAt(0).toUpperCase() + e.name.slice(1)}(${argStrs.join(", ")})`);
+        }
+        e.args.forEach(walk);
+        break;
+    }
+  }
+  walk(expr);
+  return labels;
 }
 
 /** Compute Spearman rank correlation between two Float64Arrays */

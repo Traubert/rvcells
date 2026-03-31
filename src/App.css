@@ -859,6 +859,16 @@ thead .row-header {
   min-height: 0;
 }
 
+.detail-panel-resized .timeline-main-row {
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-panel-resized .timeline-chart-col {
+  flex: 1;
+  min-height: 0;
+}
+
 .detail-panel-resized .timeline-chart-area {
   flex: 1;
   min-height: 0;
@@ -933,11 +943,35 @@ thead .row-header {
 }
 
 .hist-axis {
-  display: flex;
-  justify-content: space-between;
+  position: relative;
+  height: 16px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  color: rgba(200, 200, 220, 0.6);
+  margin-top: 2px;
+}
+
+.hist-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.hist-tick:first-child {
+  transform: none;
+}
+
+.hist-tick:last-of-type:not(:first-child) {
+  transform: none;
+}
+
+.hist-hover-info {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 11px;
   color: var(--text-dim);
-  margin-top: 2px;
+  white-space: nowrap;
 }
 
 .hist-chart-area {
@@ -1015,11 +1049,6 @@ thead .row-header {
 .hist-guide-toggle:hover {
   border-color: var(--accent);
   color: var(--text-bright);
-}
-
-.hist-hover-info {
-  color: var(--text-bright);
-  font-size: 11px;
 }
 
 .detail-controls {
@@ -1475,6 +1504,27 @@ thead .row-header {
   color: var(--text);
 }
 
+.timeline-main-row {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.timeline-chart-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-range-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
 .timeline-steps-input {
   width: 60px;
   background: var(--surface);
@@ -1582,11 +1632,11 @@ thead .row-header {
 }
 
 .timeline-cmp-band-outer {
-  fill: url(#cmp-hatch-outer);
+  fill: rgba(230, 150, 50, 0.10);
 }
 
 .timeline-cmp-band-inner {
-  fill: url(#cmp-hatch-inner);
+  fill: rgba(230, 150, 50, 0.18);
 }
 
 .timeline-cmp-median {

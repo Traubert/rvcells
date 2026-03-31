@@ -90,8 +90,19 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   const [compareRef, setCompareRef] = useState<string>(""); // committed reference
   const [compareError, setCompareError] = useState(false);
 
-  // Clear comparison when selected cell changes
+  const isFormula = cell.content.kind === "formula";
+  const distInputCount = useMemo(
+    () => isFormula ? collectInputs(addr, sheetIndex, allSheets).filter(inp => !inp.isScalar).length : 0,
+    [isFormula, addr, sheetIndex, allSheets, result]
+  );
+  const hasSensitivityTabs = distInputCount >= 2;
+
+  // Clear comparison when selected cell changes; reset tab if timeline on non-chain
   useEffect(() => { setCompareRef(""); setCompareInput(null); }, [addr]);
+  useEffect(() => {
+    if (!isChain && activeTab === "timeline") setActiveTab("distribution");
+    if (!hasSensitivityTabs && (activeTab === "correlation" || activeTab === "variance" || activeTab === "tornado")) setActiveTab("distribution");
+  }, [isChain, hasSensitivityTabs, activeTab]);
   const compareInputRef = useRef<HTMLInputElement>(null);
   const [binCount, setBinCount] = useState(DEFAULT_NUM_HISTOGRAM_BINS);
 
@@ -207,8 +218,31 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     ? Math.pow(10, Math.floor(Math.log10(Math.abs(lockedRange.max - lockedRange.min))) - 1)
     : 1;
 
-  // Check if the cell is a formula (sensitivity/tornado only make sense for formulas)
-  const isFormula = cell.content.kind === "formula";
+  // Scroll wheel zoom on histogram X range
+  const histChartRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = histChartRef.current;
+    if (!el) return;
+    function handleWheel(e: WheelEvent) {
+      e.preventDefault();
+      const rect = el!.getBoundingClientRect();
+      const xFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const curMin = isLocked ? lockedRange!.min : autoHist.min;
+      const curMax = isLocked ? lockedRange!.max : autoHist.max;
+      const curRange = curMax - curMin;
+      const factor = e.deltaY < 0 ? 0.9 : 1 / 0.9;
+      const anchor = curMin + xFrac * curRange;
+      const oldCentre = (curMin + curMax) / 2;
+      const newCentre = oldCentre + 0.25 * (anchor - oldCentre);
+      const newHalf = (curRange * factor) / 2;
+      onLockRange({
+        min: roundForDisplay(newCentre - newHalf),
+        max: roundForDisplay(newCentre + newHalf),
+      });
+    }
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  });
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelHeight, setPanelHeight] = useState<number | null>(null);
@@ -313,7 +347,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             </>
           )}
         </div>}
-        {isFormula && (
+        {(hasSensitivityTabs || isChain) && (
           <div className="detail-tabs">
             <button
               className={`detail-tab ${activeTab === "distribution" ? "detail-tab-active" : ""}`}
@@ -321,24 +355,26 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             >
               Histogram
             </button>
-            <button
-              className={`detail-tab ${activeTab === "correlation" ? "detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("correlation")}
-            >
-              Correlation
-            </button>
-            <button
-              className={`detail-tab ${activeTab === "variance" ? "detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("variance")}
-            >
-              Variance
-            </button>
-            <button
-              className={`detail-tab ${activeTab === "tornado" ? "detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("tornado")}
-            >
-              Tornado
-            </button>
+            {hasSensitivityTabs && <>
+              <button
+                className={`detail-tab ${activeTab === "correlation" ? "detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("correlation")}
+              >
+                Correlation
+              </button>
+              <button
+                className={`detail-tab ${activeTab === "variance" ? "detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("variance")}
+              >
+                Variance
+              </button>
+              <button
+                className={`detail-tab ${activeTab === "tornado" ? "detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("tornado")}
+              >
+                Tornado
+              </button>
+            </>}
             {isChain && (
               <button
                 className={`detail-tab ${activeTab === "timeline" ? "detail-tab-active" : ""}`}
@@ -379,7 +415,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             </table>
           )}
 
-          <div className="detail-chart">
+          <div ref={histChartRef} className="detail-chart">
             <Histogram hist={hist} maxBin={maxBin} stats={stats} guideMode={guideMode} compareHist={compareHist} result={result} />
           </div>
 
@@ -406,26 +442,27 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
                     checked={isLocked}
                     onChange={() => { handleLockToggle(); onReturnFocus(); }}
                   />
-                  Lock range
+                  Set range
                 </label>
                 {isLocked && (() => {
-                  const rangeCentre = (lockedRange.min + lockedRange.max) / 2;
-                  const rangeWidth = lockedRange.max - lockedRange.min;
-                  const offCentre = rangeWidth > 0 && Math.abs(stats.p50 - rangeCentre) / rangeWidth > 0.001;
-                  return offCentre ? (
+                  const autoRange = autoHist.max - autoHist.min;
+                  const changed = autoRange > 0 && (
+                    Math.abs(lockedRange.min - autoHist.min) / autoRange > 0.001 ||
+                    Math.abs(lockedRange.max - autoHist.max) / autoRange > 0.001
+                  );
+                  return changed ? (
                     <button
                       className="range-button"
                       onClick={() => {
-                        const halfWidth = rangeWidth / 2;
                         onLockRange({
-                          min: roundForDisplay(stats.p50 - halfWidth),
-                          max: roundForDisplay(stats.p50 + halfWidth),
+                          min: roundForDisplay(autoHist.min),
+                          max: roundForDisplay(autoHist.max),
                         });
                         onReturnFocus();
                       }}
-                      title="Centre range on current cell's median"
+                      title="Reset to default range"
                     >
-                      Recentre
+                      Reset
                     </button>
                   ) : null;
                 })()}
@@ -956,7 +993,18 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
         })()}
       </div>
       <div className="hist-axis">
-        <span>{formatNumber(hist.min)}</span>
+        {range > 0 && (() => {
+          const ticks = niceGridLines(hist.min, hist.max, 6);
+          return <>
+            <span className="hist-tick" style={{ left: 0 }}>{formatNumber(hist.min)}</span>
+            {ticks.filter(v => v > hist.min && v < hist.max).map(v => (
+              <span key={v} className="hist-tick" style={{ left: `${((v - hist.min) / range) * 100}%` }}>
+                {formatNumber(v)}
+              </span>
+            ))}
+            <span className="hist-tick" style={{ right: 0 }}>{formatNumber(hist.max)}</span>
+          </>;
+        })()}
         {hoverInfo && (
           <span className="hist-hover-info">
             {formatNumber(hoverInfo.lo)}–{formatNumber(hoverInfo.hi)}: {hoverInfo.pct.toFixed(1)}%
@@ -965,7 +1013,6 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
             )}
           </span>
         )}
-        <span>{formatNumber(hist.max)}</span>
       </div>
     </div>
   );
@@ -987,6 +1034,8 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   const [numSteps, setNumSteps] = useState(50);
   const [stepsInput, setStepsInput] = useState("50");
   const [hoverPos, setHoverPos] = useState<{ xFrac: number; yFrac: number } | null>(null);
+  const [lockedXRange, setLockedXRange] = useState<{ min: number; max: number } | null>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
 
   const timelineResult = useMemo(() => {
     try {
@@ -1006,18 +1055,62 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
     }
   }, [compareCell, compareAddr, compareSheetIndex, numSteps, allSheets]);
 
+  const isXLocked = lockedXRange !== null;
+  const xViewMin = isXLocked ? lockedXRange.min : 0;
+  const xViewMax = isXLocked ? lockedXRange.max : numSteps;
+
+  function applyXZoom(factor: number, anchorFrac?: number) {
+    const curMin = isXLocked ? lockedXRange!.min : 0;
+    const curMax = isXLocked ? lockedXRange!.max : numSteps;
+    const curRange = curMax - curMin;
+    const anchor = anchorFrac !== undefined
+      ? curMin + anchorFrac * curRange
+      : (curMin + curMax) / 2;
+    const newRange = curRange * factor;
+    if (newRange < 2) return; // don't zoom below 2 steps
+    const oldCentre = (curMin + curMax) / 2;
+    const newCentre = oldCentre + 0.25 * (anchor - oldCentre);
+    let newMin = newCentre - newRange / 2;
+    let newMax = newCentre + newRange / 2;
+    // Clamp to bounds while preserving range width
+    if (newMin < 0) { newMax -= newMin; newMin = 0; }
+    if (newMax > numSteps) { newMin -= (newMax - numSteps); newMax = numSteps; }
+    newMin = Math.max(0, newMin);
+    setLockedXRange({ min: newMin, max: newMax });
+  }
+
+  // Mouse wheel zoom on X axis
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+    function handleWheel(e: WheelEvent) {
+      e.preventDefault();
+      const rect = el!.getBoundingClientRect();
+      const xFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      if (e.deltaY < 0) {
+        applyXZoom(0.9, xFrac);
+      } else if (e.deltaY > 0) {
+        applyXZoom(1 / 0.9, xFrac);
+      }
+    }
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  });
+
   if (timelineResult.error) {
     return <div className="detail-body"><span className="compare-error">{timelineResult.error}</span></div>;
   }
   if (timeline.length === 0) return null;
 
-  // Compute Y range from p5/p95 across all steps (include comparison)
+  // Filter visible steps and compute Y range to fit
+  const visibleSteps = timeline.filter(s => s.step >= Math.floor(xViewMin) && s.step <= Math.ceil(xViewMax));
+  const visibleCmpSteps = compareTimeline.filter(s => s.step >= Math.floor(xViewMin) && s.step <= Math.ceil(xViewMax));
   let yMin = Infinity, yMax = -Infinity;
-  for (const s of timeline) {
+  for (const s of (visibleSteps.length > 0 ? visibleSteps : timeline)) {
     if (s.p5 < yMin) yMin = s.p5;
     if (s.p95 > yMax) yMax = s.p95;
   }
-  for (const s of compareTimeline) {
+  for (const s of visibleCmpSteps) {
     if (s.p5 < yMin) yMin = s.p5;
     if (s.p95 > yMax) yMax = s.p95;
   }
@@ -1025,9 +1118,9 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   yMin -= yPad;
   yMax += yPad;
   const yRange = yMax - yMin;
-  const xMax = timeline.length - 1;
+  const xRange = xViewMax - xViewMin;
 
-  function toXPct(step: number): number { return xMax > 0 ? (step / xMax) * 100 : 50; }
+  function toXPct(step: number): number { return xRange > 0 ? ((step - xViewMin) / xRange) * 100 : 50; }
   function toYPct(val: number): number { return yRange > 0 ? ((yMax - val) / yRange) * 100 : 50; }
   function fromYPct(pct: number): number { return yMax - (pct / 100) * yRange; }
 
@@ -1047,15 +1140,15 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   const cmpOuterBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p95, s => s.p5) : null;
   const cmpInnerBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p75, s => s.p25) : null;
 
-  // Hover: compute step and y value
-  const hoverStep = hoverPos !== null ? Math.round(hoverPos.xFrac * xMax) : null;
+  // Hover: compute step and y value from visible range
+  const hoverStep = hoverPos !== null ? Math.round(xViewMin + hoverPos.xFrac * xRange) : null;
   const hoverY = hoverPos !== null ? fromYPct(hoverPos.yFrac * 100) : null;
   const hoveredStats = hoverStep !== null && hoverStep >= 0 && hoverStep < timeline.length ? timeline[hoverStep] : null;
   const cmpHoveredStats = hoverStep !== null && hoverStep >= 0 && hoverStep < compareTimeline.length ? compareTimeline[hoverStep] : null;
 
   // Y-axis gridlines: pick ~4 nice round values
   const yGridLines = niceGridLines(yMin, yMax, 4);
-  const xGridLines = niceGridLines(0, numSteps, 6).filter(v => v > 0 && v < numSteps);
+  const xGridLines = niceGridLines(xViewMin, xViewMax, 6).filter(v => v > xViewMin && v < xViewMax);
 
   function commitSteps() {
     const n = parseInt(stepsInput, 10);
@@ -1066,6 +1159,18 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
       setStepsInput(String(numSteps));
     }
   }
+
+  function handleLockToggle() {
+    if (isXLocked) {
+      setLockedXRange(null);
+    } else {
+      setLockedXRange({ min: 0, max: numSteps });
+    }
+  }
+
+  const showRecentre = isXLocked && (
+    Math.abs(xViewMin) > 0.01 || Math.abs(xViewMax - numSteps) > 0.01
+  );
 
   return (
     <div className="detail-body timeline-body">
@@ -1097,88 +1202,110 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
           </span>
         )}
       </div>
-      <div className="timeline-chart-area">
-        <div className="timeline-yaxis">
-          {yGridLines.map(v => (
-            <span key={v} className="timeline-ylabel" style={{ bottom: `${((v - yMin) / yRange) * 100}%` }}>
-              {formatNumber(v)}
-            </span>
-          ))}
-        </div>
-        <div
-          className="timeline-chart"
-          onMouseMove={e => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setHoverPos({
-              xFrac: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
-              yFrac: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
-            });
-          }}
-          onMouseLeave={() => setHoverPos(null)}
-        >
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="timeline-svg">
-            <defs>
-              <pattern id="cmp-hatch-outer" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
-                <rect width="6" height="6" fill="rgba(230, 150, 50, 0.08)" />
-                <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(230, 150, 50, 0.2)" strokeWidth="1.5" />
-              </pattern>
-              <pattern id="cmp-hatch-inner" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)">
-                <rect width="4" height="4" fill="rgba(230, 150, 50, 0.15)" />
-                <line x1="0" y1="0" x2="0" y2="4" stroke="rgba(230, 150, 50, 0.35)" strokeWidth="1.5" />
-              </pattern>
-            </defs>
-            {/* Gridlines */}
-            {yGridLines.map(v => (
-              <line key={`y${v}`} x1="0" x2="100" y1={toYPct(v)} y2={toYPct(v)} className="timeline-gridline" />
-            ))}
-            {xGridLines.map(v => (
-              <line key={`x${v}`} x1={toXPct(v)} x2={toXPct(v)} y1="0" y2="100" className="timeline-gridline" />
-            ))}
-            <polygon points={outerBand} className="timeline-band-outer" />
-            <polygon points={innerBand} className="timeline-band-inner" />
-            <polyline points={medianLine} className="timeline-median" />
-            {cmpOuterBand && <polygon points={cmpOuterBand} className="timeline-cmp-band-outer" />}
-            {cmpInnerBand && <polygon points={cmpInnerBand} className="timeline-cmp-band-inner" />}
-            {cmpMedianLine && <polyline points={cmpMedianLine} className="timeline-cmp-median" />}
-          </svg>
-          {hoverPos !== null && (
-            <>
-              <div className="timeline-cursor" style={{ left: `${hoverPos.xFrac * 100}%` }} />
-              <div className="timeline-cursor-h" style={{ top: `${hoverPos.yFrac * 100}%` }} />
-              <span
-                className="timeline-hover-label timeline-hover-y-above"
-                style={{ top: `${hoverPos.yFrac * 100}%` }}
-              >
-                {hoveredStats && hoverY !== null && (
-                  <span className="timeline-pct-at-cursor">{interpolatePct(hoverY, hoveredStats)}</span>
-                )}
-                <br />
-                {hoverY !== null ? formatNumber(hoverY) : ""}
-              </span>
-              {cmpHoveredStats && hoverY !== null && (
-                <span
-                  className="timeline-hover-label timeline-hover-y-below"
-                  style={{ top: `${hoverPos.yFrac * 100}%` }}
-                >
-                  {interpolatePct(hoverY, cmpHoveredStats)}
+      <div className="timeline-main-row">
+        <div className="timeline-chart-col">
+          <div className="timeline-chart-area">
+            <div className="timeline-yaxis">
+              {yGridLines.map(v => (
+                <span key={v} className="timeline-ylabel" style={{ bottom: `${((v - yMin) / yRange) * 100}%` }}>
+                  {formatNumber(v)}
                 </span>
+              ))}
+            </div>
+            <div
+              ref={chartRef}
+              className="timeline-chart"
+              onMouseMove={e => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setHoverPos({
+                  xFrac: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+                  yFrac: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+                });
+              }}
+              onMouseLeave={() => setHoverPos(null)}
+            >
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="timeline-svg">
+                {/* Gridlines */}
+                {yGridLines.map(v => (
+                  <line key={`y${v}`} x1="0" x2="100" y1={toYPct(v)} y2={toYPct(v)} className="timeline-gridline" />
+                ))}
+                {xGridLines.map(v => (
+                  <line key={`x${v}`} x1={toXPct(v)} x2={toXPct(v)} y1="0" y2="100" className="timeline-gridline" />
+                ))}
+                <polygon points={outerBand} className="timeline-band-outer" />
+                <polygon points={innerBand} className="timeline-band-inner" />
+                <polyline points={medianLine} className="timeline-median" />
+                {cmpOuterBand && <polygon points={cmpOuterBand} className="timeline-cmp-band-outer" />}
+                {cmpInnerBand && <polygon points={cmpInnerBand} className="timeline-cmp-band-inner" />}
+                {cmpMedianLine && <polyline points={cmpMedianLine} className="timeline-cmp-median" />}
+              </svg>
+              {hoverPos !== null && (
+                <>
+                  <div className="timeline-cursor" style={{ left: `${hoverPos.xFrac * 100}%` }} />
+                  <div className="timeline-cursor-h" style={{ top: `${hoverPos.yFrac * 100}%` }} />
+                  <span
+                    className="timeline-hover-label timeline-hover-y-above"
+                    style={{ top: `${hoverPos.yFrac * 100}%` }}
+                  >
+                    {hoveredStats && hoverY !== null && (
+                      <span className="timeline-pct-at-cursor">{interpolatePct(hoverY, hoveredStats)}</span>
+                    )}
+                    <br />
+                    {hoverY !== null ? formatNumber(hoverY) : ""}
+                  </span>
+                  {cmpHoveredStats && hoverY !== null && (
+                    <span
+                      className="timeline-hover-label timeline-hover-y-below"
+                      style={{ top: `${hoverPos.yFrac * 100}%` }}
+                    >
+                      {interpolatePct(hoverY, cmpHoveredStats)}
+                    </span>
+                  )}
+                  <span
+                    className="timeline-hover-label timeline-hover-t"
+                    style={{ left: `${hoverPos.xFrac * 100}%` }}
+                  >
+                    t={hoverStep ?? ""}
+                  </span>
+                </>
               )}
-              <span
-                className="timeline-hover-label timeline-hover-t"
-                style={{ left: `${hoverPos.xFrac * 100}%` }}
+            </div>
+          </div>
+          <div className="timeline-axis">
+            <span style={{ position: "absolute", left: 0 }}>{Math.round(xViewMin)}</span>
+            {xGridLines.map(v => (
+              <span key={v} style={{ position: "absolute", left: `${toXPct(v)}%`, transform: "translateX(-50%)" }}>{Math.round(v)}</span>
+            ))}
+            <span style={{ position: "absolute", right: 0 }}>{Math.round(xViewMax)}</span>
+          </div>
+        </div>
+        <div className="timeline-range-controls">
+          <div className="lock-range-row">
+            <label className="lock-range-label">
+              <input
+                type="checkbox"
+                checked={isXLocked}
+                onChange={handleLockToggle}
+              />
+              Set range
+            </label>
+            {showRecentre && (
+              <button
+                className="range-button"
+                onClick={() => setLockedXRange({ min: 0, max: numSteps })}
+                title="Reset to full range"
               >
-                t={hoverStep ?? ""}
-              </span>
-            </>
+                Reset
+              </button>
+            )}
+          </div>
+          {isXLocked && (
+            <span className="zoom-buttons">
+              <button className="zoom-button" onClick={() => applyXZoom(0.9)} title="Zoom in">+</button>
+              <button className="zoom-button" onClick={() => applyXZoom(1 / 0.9)} title="Zoom out">−</button>
+            </span>
           )}
         </div>
-      </div>
-      <div className="timeline-axis">
-        <span style={{ position: "absolute", left: 0 }}>0</span>
-        {xGridLines.map(v => (
-          <span key={v} style={{ position: "absolute", left: `${toXPct(v)}%`, transform: "translateX(-50%)" }}>{v}</span>
-        ))}
-        <span style={{ position: "absolute", right: 0 }}>{numSteps}</span>
       </div>
     </div>
   );
