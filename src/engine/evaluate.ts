@@ -2,14 +2,7 @@ import type { Cell, CellAddress, CellResult, Expr, Sheet } from "./types";
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
-import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
-
-/** Names of distribution constructor functions.
- *  Keep in sync with the cases in evalFunc — if you add a distribution there, add it here. */
-const DISTRIBUTION_CONSTRUCTORS = new Set([
-  "normal", "lognormal", "uniform", "triangular", "beta", "bernoulli", "discrete",
-]);
-
+import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, SAMPLE_CONSTRUCTORS } from "../constants";
 import type { InlineSample } from "./types";
 
 /** Module-level capture for inline distribution samples during formula evaluation.
@@ -19,6 +12,12 @@ let _inlineSampleCapture: InlineSample[] | null = null;
 /** When true, distribution constructors return their expected value as a scalar
  *  instead of generating random samples. Used by tornado scenario evaluation. */
 let _deterministicMode = false;
+
+/** Current cell being evaluated — used by Chain to attach body/initial to the cell. */
+let _currentEvalCell: Cell | null = null;
+
+/** Current chain step number — used by _t variable inside chain bodies. */
+let _currentChainStep: number | null = null;
 
 /** Global cell address: "sheetIdx:cellAddr" */
 type GlobalAddr = string;
@@ -119,22 +118,29 @@ function buildVarMap(cells: Map<CellAddress, Cell>): { varMap: Map<string, CellA
   // Clear previous duplicate errors so they can be re-evaluated
   const clearedAddrs: CellAddress[] = [];
   for (const [addr, cell] of cells) {
-    if (cell.variableName && cell.error?.startsWith("Duplicate variable")) {
+    if (cell.variableName && (cell.error?.startsWith("Duplicate variable") || cell.error?.includes("reserved name"))) {
       cell.error = undefined;
       clearedAddrs.push(addr);
     }
   }
   const varMap = new Map<string, CellAddress>();
   const dupAddrs = new Set<CellAddress>();
+  const RESERVED_VARS = new Set(["_t"]);
   for (const [addr, cell] of cells) {
     if (cell.variableName) {
-      const existing = varMap.get(cell.variableName);
-      if (existing) {
-        cell.error = `Duplicate variable "${cell.variableName}" (already defined in ${existing})`;
+      if (RESERVED_VARS.has(cell.variableName)) {
+        cell.error = `"${cell.variableName}" is a reserved name`;
         cell.result = undefined;
         dupAddrs.add(addr);
       } else {
-        varMap.set(cell.variableName, addr);
+        const existing = varMap.get(cell.variableName);
+        if (existing) {
+          cell.error = `Duplicate variable "${cell.variableName}" (already defined in ${existing})`;
+          cell.result = undefined;
+          dupAddrs.add(addr);
+        } else {
+          varMap.set(cell.variableName, addr);
+        }
       }
     }
   }
@@ -156,12 +162,26 @@ interface CrossSheetCtx {
   allResults: Map<CellAddress, CellResult>[];
 }
 
+/** Check if a cell's formula is a Chain() call */
+function isChainCell(cell: Cell): boolean {
+  return cell.content.kind === "formula"
+    && cell.content.expr.type === "funcCall"
+    && cell.content.expr.name === "chain";
+}
+
 /** Get all direct dependencies of a cell as cell addresses (local only) */
-function cellDeps(cell: Cell, varMap: Map<string, CellAddress>): CellAddress[] {
+function cellDeps(cell: Cell, varMap: Map<string, CellAddress>, cellAddr?: CellAddress): CellAddress[] {
   if (cell.content.kind !== "formula") return [];
+  const isChain = isChainCell(cell);
   const { cellRefs, varRefs } = exprDeps(cell.content.expr);
-  const deps = [...cellRefs];
+  const deps: CellAddress[] = [];
+  for (const ref of cellRefs) {
+    if (isChain && ref === cellAddr) continue; // chain self-reference by address
+    deps.push(ref);
+  }
+  const selfVar = isChain ? cell.variableName : undefined;
   for (const v of varRefs) {
+    if (v === selfVar) continue; // chain self-reference by variable name
     const addr = varMap.get(v);
     if (addr) deps.push(addr);
   }
@@ -171,21 +191,26 @@ function cellDeps(cell: Cell, varMap: Map<string, CellAddress>): CellAddress[] {
 /** Get all direct dependencies of a cell as global addresses (cross-sheet aware) */
 function globalCellDeps(
   cell: Cell,
+  cellAddr: CellAddress,
   sheetIdx: number,
   allSheets: Sheet[],
   allVarMaps: Map<string, CellAddress>[],
 ): GlobalAddr[] {
   if (cell.content.kind !== "formula") return [];
+  const isChain = isChainCell(cell);
   const { cellRefs, varRefs, sheetRefs } = exprDeps(cell.content.expr);
   const deps: GlobalAddr[] = [];
 
   // Local cell refs
   for (const addr of cellRefs) {
+    if (isChain && addr === cellAddr) continue; // chain self-reference by address
     deps.push(toGlobal(sheetIdx, addr));
   }
   // Local var refs
   const varMap = allVarMaps[sheetIdx];
+  const selfVar = isChain ? cell.variableName : undefined;
   for (const v of varRefs) {
+    if (v === selfVar) continue; // chain self-reference by variable name
     const addr = varMap.get(v);
     if (addr) deps.push(toGlobal(sheetIdx, addr));
   }
@@ -261,6 +286,10 @@ function evalExpr(
     }
 
     case "varRef": {
+      // _t is a contextual variable inside chain bodies
+      if (expr.name === "_t" && _currentChainStep !== null) {
+        return { kind: "scalar", value: _currentChainStep };
+      }
       const addr = varMap.get(expr.name);
       if (!addr) throw new Error(`Unknown variable: ${expr.name}`);
       return results.get(addr) ?? { kind: "scalar", value: 0 };
@@ -351,7 +380,7 @@ function collectSubDag(
     visited.add(a);
     const cell = cells.get(a);
     if (cell) {
-      for (const dep of cellDeps(cell, varMap)) {
+      for (const dep of cellDeps(cell, varMap, a)) {
         visit(dep);
       }
     }
@@ -372,6 +401,101 @@ function captureDist(label: string, result: CellResult, expectedValue?: number):
     _inlineSampleCapture.push({ label, values: result.values });
   }
   return result;
+}
+
+/** Lazily compute chain steps up to targetStep, caching results.
+ *  Referenced distribution cells are auto-resampled each step.
+ *  Referenced chain cells are auto-synced to the same step. */
+function evaluateChainStep(
+  chainCell: Cell,
+  chainAddr: CellAddress,
+  targetStep: number,
+  results: Map<CellAddress, CellResult>,
+  varMap: Map<string, CellAddress>,
+  n: number,
+  cells: Map<CellAddress, Cell>,
+  ctx?: CrossSheetCtx,
+): Float64Array {
+  if (!chainCell.chainBody || !chainCell.chainInitial) {
+    throw new Error("Not a chain cell");
+  }
+
+  // Initialize cache with initial value
+  if (!chainCell.chainCache) {
+    chainCell.chainCache = [toArray(chainCell.chainInitial, n)];
+  }
+
+  if (targetStep < chainCell.chainCache.length) {
+    return chainCell.chainCache[targetStep];
+  }
+
+  // Collect body dependencies for auto-resample/auto-sync
+  const { cellRefs, varRefs } = exprDeps(chainCell.chainBody);
+  const depAddrs: CellAddress[] = [];
+  for (const ref of cellRefs) {
+    if (ref === chainAddr) continue; // self-ref by address handled via shadow results
+    depAddrs.push(ref);
+  }
+  for (const v of varRefs) {
+    if (v === chainCell.variableName) continue; // self-ref by variable name
+    const addr = varMap.get(v);
+    if (addr) depAddrs.push(addr);
+  }
+
+  // Classify deps: chain cells vs non-chain cells
+  const chainDeps: { addr: CellAddress; cell: Cell }[] = [];
+  const resampleDeps: CellAddress[] = [];
+  for (const addr of depAddrs) {
+    const depCell = cells.get(addr);
+    if (depCell && isChainCell(depCell)) {
+      chainDeps.push({ addr, cell: depCell });
+    } else {
+      resampleDeps.push(addr);
+    }
+  }
+
+  // Collect sub-DAGs for non-chain deps (for resampling)
+  const resampleSubDags = resampleDeps.map((addr) => ({
+    addr,
+    subDag: collectSubDag(addr, cells, varMap),
+  }));
+
+  for (let t = chainCell.chainCache.length; t <= targetStep; t++) {
+    // Save/restore chain step for nested chains
+    const prevChainStep = _currentChainStep;
+    _currentChainStep = t;
+
+    // Build shadow results: previous step for self-reference
+    const shadowResults = new Map(results);
+    shadowResults.set(chainAddr, { kind: "samples", values: chainCell.chainCache[t - 1] });
+
+    // Auto-resample non-chain deps (fresh draws each step)
+    for (const { addr, subDag } of resampleSubDags) {
+      const freshResults = new Map<CellAddress, CellResult>();
+      for (const subAddr of subDag) {
+        const subCell = cells.get(subAddr);
+        if (subCell) {
+          evalCell(subAddr, subCell, freshResults, varMap, n, cells, true, ctx);
+        }
+      }
+      const freshResult = freshResults.get(addr);
+      if (freshResult) shadowResults.set(addr, freshResult);
+    }
+
+    // Auto-sync chain deps to current step
+    for (const { addr, cell } of chainDeps) {
+      const stepValues = evaluateChainStep(cell, addr, t, results, varMap, n, cells, ctx);
+      shadowResults.set(addr, { kind: "samples", values: stepValues });
+    }
+
+    // Evaluate body expression
+    const stepResult = evalExpr(chainCell.chainBody, shadowResults, varMap, n, cells, ctx);
+    chainCell.chainCache[t] = toArray(stepResult, n);
+
+    _currentChainStep = prevChainStep;
+  }
+
+  return chainCell.chainCache[targetStep];
 }
 
 /** Evaluate a function call */
@@ -409,6 +533,55 @@ function evalFunc(
       }
     }
     return freshResults.get(targetAddr) ?? { kind: "scalar", value: 0 };
+  }
+
+  // Chain(body, initial) — define an iterative process
+  if (name === "chain") {
+    if (argExprs.length !== 2) throw new Error("Chain(body, initial) takes 2 arguments");
+    // Evaluate the initial value (can be scalar or distribution)
+    const initResult = evalExpr(argExprs[1], results, varMap, n, cells, ctx);
+    // Validate body references before storing
+    const bodyDeps = exprDeps(argExprs[0]);
+    const selfVar = _currentEvalCell?.variableName;
+    for (const v of bodyDeps.varRefs) {
+      if (v === selfVar || v === "_t") continue;
+      if (!varMap.get(v)) throw new Error(`Unknown variable in Chain body: ${v}`);
+    }
+    // Store chain metadata on the cell for lazy step computation
+    if (_currentEvalCell) {
+      _currentEvalCell.chainBody = argExprs[0];
+      _currentEvalCell.chainInitial = initResult;
+      _currentEvalCell.chainCache = undefined; // clear cache on re-eval
+    }
+    return initResult; // direct references to chain cell get the initial value
+  }
+
+  // ChainIndex(chain_ref, step) — get distribution at a specific step
+  if (name === "chainindex") {
+    if (argExprs.length !== 2) throw new Error("ChainIndex(chain, step) takes 2 arguments");
+    // Resolve chain cell
+    const arg = argExprs[0];
+    let targetAddr: CellAddress;
+    if (arg.type === "cellRef") {
+      targetAddr = toAddress(arg.col, arg.row);
+    } else if (arg.type === "varRef") {
+      const resolved = varMap.get(arg.name);
+      if (!resolved) throw new Error(`Unknown variable: ${arg.name}`);
+      targetAddr = resolved;
+    } else {
+      throw new Error("ChainIndex() first argument must be a cell reference or variable");
+    }
+    const targetCell = cells.get(targetAddr);
+    if (!targetCell || !targetCell.chainBody) {
+      throw new Error("ChainIndex() first argument must be a Chain cell");
+    }
+    // Evaluate step number
+    const stepResult = evalExpr(argExprs[1], results, varMap, n, cells, ctx);
+    if (stepResult.kind !== "scalar") throw new Error("ChainIndex() step must be a scalar");
+    const step = Math.floor(stepResult.value);
+    if (step < 0) throw new Error("ChainIndex() step must be non-negative");
+    const values = evaluateChainStep(targetCell, targetAddr, step, results, varMap, n, cells, ctx);
+    return { kind: "samples", values };
   }
 
   const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells, ctx));
@@ -571,6 +744,7 @@ function evalCell(
   ctx?: CrossSheetCtx,
 ): void {
   if (!tempOnly) cell.error = undefined;
+  if (!tempOnly) _currentEvalCell = cell;
   let result: CellResult | undefined;
   try {
     switch (cell.content.kind) {
@@ -609,6 +783,7 @@ function evalCell(
   }
   if (!tempOnly) {
     cell.result = result;
+    _currentEvalCell = null;
   }
   if (result) {
     results.set(addr, result);
@@ -653,7 +828,7 @@ function globalTopoSort(
     const { sheetIdx, addr } = fromGlobal(ga);
     const cell = allSheets[sheetIdx]?.cells.get(addr);
     if (cell) {
-      for (const dep of globalCellDeps(cell, sheetIdx, allSheets, allVarMaps)) {
+      for (const dep of globalCellDeps(cell, addr, sheetIdx, allSheets, allVarMaps)) {
         visit(dep);
       }
     }
@@ -690,7 +865,7 @@ function globalTopoSortWithCycles(
     const { sheetIdx, addr } = fromGlobal(ga);
     const cell = allSheets[sheetIdx]?.cells.get(addr);
     if (cell) {
-      for (const dep of globalCellDeps(cell, sheetIdx, allSheets, allVarMaps)) {
+      for (const dep of globalCellDeps(cell, addr, sheetIdx, allSheets, allVarMaps)) {
         if (!visit(dep)) {
           cycleAddrs.add(ga);
           visiting.delete(ga);
@@ -722,7 +897,7 @@ function globalBuildReverseDeps(
   for (let si = 0; si < allSheets.length; si++) {
     for (const [addr, cell] of allSheets[si].cells) {
       const ga = toGlobal(si, addr);
-      for (const dep of globalCellDeps(cell, si, allSheets, allVarMaps)) {
+      for (const dep of globalCellDeps(cell, addr, si, allSheets, allVarMaps)) {
         let set = rev.get(dep);
         if (!set) {
           set = new Set();
@@ -774,7 +949,7 @@ function globalWouldCycle(
     const { sheetIdx, addr: cellAddr } = fromGlobal(current);
     const cell = allSheets[sheetIdx]?.cells.get(cellAddr);
     if (!cell) return false;
-    for (const dep of globalCellDeps(cell, sheetIdx, allSheets, allVarMaps)) {
+    for (const dep of globalCellDeps(cell, addr, sheetIdx, allSheets, allVarMaps)) {
       if (canReach(dep)) return true;
     }
     return false;
@@ -792,12 +967,22 @@ function globalWouldCycle(
  * Bulk recalculation with cycle detection across all sheets.
  * Used when loading files or pasting.
  */
+/** Clear chain caches on all cells across all sheets */
+function clearChainCaches(allSheets: Sheet[]): void {
+  for (const sheet of allSheets) {
+    for (const cell of sheet.cells.values()) {
+      if (cell.chainCache) cell.chainCache = undefined;
+    }
+  }
+}
+
 export function recalculateBulk(sheet: Sheet): void {
   recalculateAllBulk([sheet]);
 }
 
 /** Bulk recalculate all sheets with cross-sheet support and cycle detection. */
 export function recalculateAllBulk(allSheets: Sheet[]): void {
+  clearChainCaches(allSheets);
   const { allVarMaps, allDupAddrs } = buildAllVarMaps(allSheets);
   const { order, cycleAddrs } = globalTopoSortWithCycles(allSheets, allVarMaps);
   const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
@@ -835,6 +1020,7 @@ export function recalculate(sheet: Sheet): void {
 }
 
 export function recalculateAll(allSheets: Sheet[]): void {
+  clearChainCaches(allSheets);
   const { allVarMaps, allDupAddrs } = buildAllVarMaps(allSheets);
   const order = globalTopoSort(allSheets, allVarMaps);
   const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
@@ -867,6 +1053,7 @@ export function recalculateAllFrom(
   changedSheetIdx: number,
   changedAddrs: CellAddress[],
 ): void {
+  clearChainCaches(allSheets);
   const { allVarMaps, allDupAddrs, allClearedAddrs } = buildAllVarMaps(allSheets);
 
   const globalRoots = changedAddrs.map((a) => toGlobal(changedSheetIdx, a));
@@ -943,7 +1130,7 @@ export function setCellRaw(
     const prev = sheet.cells.get(addr);
     sheet.cells.set(addr, cell);
     const { allVarMaps } = buildAllVarMaps(sheets);
-    const deps = globalCellDeps(cell, si, sheets, allVarMaps);
+    const deps = globalCellDeps(cell, addr, si, sheets, allVarMaps);
     const globalAddr = toGlobal(si, addr);
 
     if (globalWouldCycle(globalAddr, deps, sheets, allVarMaps)) {
@@ -1176,7 +1363,7 @@ function hasInlineDistribution(expr: Expr): boolean {
     case "unaryMinus":
       return hasInlineDistribution(expr.operand);
     case "funcCall":
-      if (DISTRIBUTION_CONSTRUCTORS.has(expr.name)) return true;
+      if (SAMPLE_CONSTRUCTORS.has(expr.name)) return true;
       return expr.args.some(hasInlineDistribution);
   }
 }
@@ -1517,6 +1704,79 @@ export function computeTornado(
     Math.abs(b.outputAtHigh - b.outputAtLow) - Math.abs(a.outputAtHigh - a.outputAtLow)
   );
   return bars;
+}
+
+/** Compute summary stats for each step of a chain, up to numSteps.
+ *  Lazily evaluates chain steps as needed. */
+export function computeChainTimeline(
+  cell: Cell,
+  cellAddr: CellAddress,
+  numSteps: number,
+  allSheets: Sheet[],
+  sheetIndex: number,
+): { step: number; mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number }[] {
+  if (!cell.chainBody || !cell.chainInitial) return [];
+
+  const sheet = allSheets[sheetIndex];
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+  const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
+
+  // Populate results from existing cell results
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const [addr, c] of allSheets[si].cells) {
+      if (c.result) allResults[si].set(addr, c.result);
+    }
+  }
+
+  const ctx: CrossSheetCtx = {
+    allSheets,
+    currentSheetIdx: sheetIndex,
+    allVarMaps,
+    allResults,
+  };
+
+  // Ensure steps are computed
+  evaluateChainStep(cell, cellAddr, numSteps, allResults[sheetIndex], allVarMaps[sheetIndex], sheet.numSamples, sheet.cells, ctx);
+
+  const timeline: { step: number; mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number }[] = [];
+  for (let t = 0; t <= numSteps && t < (cell.chainCache?.length ?? 0); t++) {
+    const stats = summarize({ kind: "samples", values: cell.chainCache![t] });
+    timeline.push({ step: t, ...stats });
+  }
+  return timeline;
+}
+
+/** Get the chain step result for the detail view. Lazily computes if needed. */
+export function getChainStepResult(
+  cell: Cell,
+  cellAddr: CellAddress,
+  step: number,
+  allSheets: Sheet[],
+  sheetIndex: number,
+): CellResult {
+  if (!cell.chainBody || !cell.chainInitial) {
+    return cell.result ?? { kind: "scalar", value: 0 };
+  }
+
+  const sheet = allSheets[sheetIndex];
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+  const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
+
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const [addr, c] of allSheets[si].cells) {
+      if (c.result) allResults[si].set(addr, c.result);
+    }
+  }
+
+  const ctx: CrossSheetCtx = {
+    allSheets,
+    currentSheetIdx: sheetIndex,
+    allVarMaps,
+    allResults,
+  };
+
+  const values = evaluateChainStep(cell, cellAddr, step, allResults[sheetIndex], allVarMaps[sheetIndex], sheet.numSamples, sheet.cells, ctx);
+  return { kind: "samples", values };
 }
 
 /** Compute histogram bins from samples.

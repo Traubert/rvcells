@@ -15,12 +15,15 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/parser.ts` — cell input parser and recursive descent expression parser; supports cross-sheet refs (`Sheet.A1`, `'Sheet Name'.var`)
 - `src/engine/parser.test.ts` — parser test suite (vitest)
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
-- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, summary stats, histograms, sheet rename/delete helpers
-- `src/engine/file.ts` — JSON file format v2 (multi-sheet), import/export with v1 backward compat
+- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex, summary stats, histograms, sheet rename/delete helpers
+- `src/engine/storage.ts` — localStorage persistence, zip mass export/import
+- `src/engine/file.ts` — JSON file format v2 (multi-sheet), import/export
+- `src/constants.ts` — shared string, numeric, and distribution name constants
 - `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
 - `src/components/Grid.tsx` — spreadsheet grid UI, keyboard navigation, formula bar
-- `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls
+- `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls, sensitivity tabs, Chain timeline fan chart
+- `src/components/OpenDialog.tsx` — browser storage open/delete dialog
 - `src/components/TabBar.tsx` — sheet tab bar with add/close/rename
 - `src/components/ConfirmDialog.tsx` — reusable confirmation dialog
 
@@ -76,11 +79,15 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Sheet delete warns if referenced, with in-app confirmation dialog
 - [x] Bernoulli(p) and Discrete(p1, ..., pN) distributions
 - [x] resample(cell): re-evaluate sub-DAG with fresh random draws
+- [x] Chain(body, init): iterative process with lazy evaluation, auto-resample, cross-chain sync
+- [x] ChainIndex(chain, step): access distribution at a specific chain step
+- [x] `_t` contextual variable inside Chain bodies (current step number)
+- [x] Timeline fan chart in detail panel for Chain cells with step navigation and comparison overlay
+- [x] Resizable detail panel (drag handle)
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete
 - [x] Histogram guidelines (σ and percentile modes)
 - [x] Range unit selector (value, σ, percentile) for locked range
 - [x] Distribution comparison: overlay another cell's histogram (orange) with side-by-side stats
-- [ ] Consider: Pareto distribution, Poisson distribution, logistic distribution, log-logistic distribution
 
 ### P1 — analysis
 - [x] Correlation tab: Spearman rank correlation of each distribution input with the output
@@ -109,6 +116,10 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Custom distributions (empirical, from pasted data)
 - [ ] Multiple scenarios / side-by-side comparison
 - [ ] Shareable via URL (encode state in URL or use a paste service)
+
+### Additional TODOs
+- [ ] Consider: Pareto distribution, Poisson distribution, logistic distribution, log-logistic distribution
+- [ ] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
 
 ## Design Principles
 

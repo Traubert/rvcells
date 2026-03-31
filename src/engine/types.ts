@@ -45,6 +45,9 @@ export interface Cell {
   result?: CellResult;
   error?: string;
   inlineSamples?: InlineSample[]; // captured during evaluation for sensitivity analysis
+  chainBody?: Expr;            // body expression (first arg of Chain)
+  chainInitial?: CellResult;   // initial value (scalar or samples)
+  chainCache?: Float64Array[];  // lazily computed steps; [0] = initial as array
 }
 
 /** Cell address as "A1" style string */

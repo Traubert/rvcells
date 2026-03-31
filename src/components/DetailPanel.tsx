@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import type { Cell, Sheet } from "../engine/types";
-import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, resolveReference } from "../engine/evaluate";
+import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, resolveReference, getChainStepResult, computeChainTimeline } from "../engine/evaluate";
 import { formatNumber } from "../format";
 import { DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
 
@@ -54,7 +54,7 @@ function useRepeatAction(action: (step: number) => void) {
   return { onMouseDown: start, onMouseUp: stop, onMouseLeave: stop };
 }
 
-type DetailTab = "distribution" | "correlation" | "variance" | "tornado";
+type DetailTab = "distribution" | "correlation" | "variance" | "tornado" | "timeline";
 
 interface DetailPanelProps {
   addr: string;
@@ -67,13 +67,31 @@ interface DetailPanelProps {
 }
 
 export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, onLockRange, onReturnFocus }: DetailPanelProps) {
-  const result = cell.result;
-  if (!result) return null;
+  const baseResult = cell.result;
+  if (!baseResult) return null;
+
+  const isChain = cell.chainBody !== undefined;
+  const [chainStep, setChainStep] = useState(0);
+
+  // For chain cells, use the step's result; for others, use the cell's result
+  const chainEval = useMemo(() => {
+    if (!isChain || chainStep === 0) return { result: baseResult, error: null };
+    try {
+      return { result: getChainStepResult(cell, addr, chainStep, allSheets, sheetIndex), error: null };
+    } catch (e) {
+      return { result: baseResult, error: (e as Error).message };
+    }
+  }, [isChain, chainStep, baseResult, cell, addr, allSheets, sheetIndex]);
+  const result = chainEval.result;
+  const chainError = chainEval.error;
 
   const [activeTab, setActiveTab] = useState<DetailTab>("distribution");
   const [compareInput, setCompareInput] = useState<string | null>(null); // null = input hidden
   const [compareRef, setCompareRef] = useState<string>(""); // committed reference
   const [compareError, setCompareError] = useState(false);
+
+  // Clear comparison when selected cell changes
+  useEffect(() => { setCompareRef(""); setCompareInput(null); }, [addr]);
   const compareInputRef = useRef<HTMLInputElement>(null);
   const [binCount, setBinCount] = useState(DEFAULT_NUM_HISTOGRAM_BINS);
 
@@ -192,15 +210,51 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   // Check if the cell is a formula (sensitivity/tornado only make sense for formulas)
   const isFormula = cell.content.kind === "formula";
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const panel = panelRef.current;
+    if (!panel) return;
+    const startHeight = panel.getBoundingClientRect().height;
+    dragRef.current = { startY: e.clientY, startHeight };
+    document.body.style.userSelect = "none";
+
+    function onMove(ev: MouseEvent) {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - ev.clientY;
+      setPanelHeight(Math.max(80, dragRef.current.startHeight + delta));
+    }
+    function onUp() {
+      dragRef.current = null;
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
   return (
-    <div className="detail-panel">
+    <div ref={panelRef} className={`detail-panel${panelHeight ? " detail-panel-resized" : ""}`} style={{ height: panelHeight ?? undefined }}>
+      <div className="detail-resize-handle" onMouseDown={handleDragStart} />
       <div className="detail-header">
         <span className="detail-addr">{addr}</span>
         {cell.variableName && (
           <span className="detail-var">{cell.variableName}</span>
         )}
         <span className="detail-raw">{cell.raw}</span>
-        <div className="compare-controls">
+        {isChain && activeTab !== "timeline" && (
+          <div className="chain-step-controls">
+            <button className="detail-tab" onClick={() => setChainStep(s => Math.max(0, s - 1))} disabled={chainStep === 0}>◀</button>
+            <span className="chain-step-label">Step {chainStep}</span>
+            <button className="detail-tab" onClick={() => setChainStep(s => s + 1)}>▶</button>
+            {chainError && <span className="compare-error">{chainError}</span>}
+          </div>
+        )}
+        {(activeTab === "distribution" || activeTab === "timeline") && <div className="compare-controls">
           {compareInput !== null ? (
             <span className="compare-input-wrap">
               <input
@@ -212,8 +266,16 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const val = compareInput.trim();
-                    if (val && resolveReference(val, sheetIndex, allSheets)) {
-                      setCompareRef(val);
+                    const resolved = val ? resolveReference(val, sheetIndex, allSheets) : null;
+                    if (resolved) {
+                      const wantChain = activeTab === "timeline";
+                      const isCompareChain = resolved.cell.chainBody !== undefined;
+                      if (wantChain && !isCompareChain) {
+                        setCompareError(true);
+                        setTimeout(() => setCompareError(false), 2000);
+                      } else {
+                        setCompareRef(val);
+                      }
                     } else if (val) {
                       setCompareError(true);
                       setTimeout(() => setCompareError(false), 2000);
@@ -243,14 +305,14 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             <>
               <button
                 className="detail-tab"
-                onClick={() => { setCompareInput(""); setActiveTab("distribution"); }}
+                onClick={() => { setCompareInput(""); }}
               >
                 Compare...
               </button>
-              {compareError && <span className="compare-error">Couldn't resolve reference</span>}
+              {compareError && <span className="compare-error">{activeTab === "timeline" ? "Must be a Chain cell" : "Couldn't resolve reference"}</span>}
             </>
           )}
-        </div>
+        </div>}
         {isFormula && (
           <div className="detail-tabs">
             <button
@@ -277,6 +339,14 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             >
               Tornado
             </button>
+            {isChain && (
+              <button
+                className={`detail-tab ${activeTab === "timeline" ? "detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("timeline")}
+              >
+                Timeline
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -460,6 +530,15 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
           sheetIndex={sheetIndex}
           addr={addr}
           outputResult={result}
+        />
+      )}
+
+      {activeTab === "timeline" && isChain && (
+        <TimelineView
+          cell={cell} addr={addr} allSheets={allSheets} sheetIndex={sheetIndex}
+          compareCell={compareResolved?.cell.chainBody ? compareResolved.cell : undefined}
+          compareAddr={compareResolved?.addr}
+          compareSheetIndex={compareResolved?.sheetIndex}
         />
       )}
     </div>
@@ -890,4 +969,256 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
       </div>
     </div>
   );
+}
+
+// ─── Timeline view (fan chart for Chain cells) ──────────────────────
+
+interface TimelineViewProps {
+  cell: Cell;
+  addr: string;
+  allSheets: Sheet[];
+  sheetIndex: number;
+  compareCell?: Cell;
+  compareAddr?: string;
+  compareSheetIndex?: number;
+}
+
+function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareAddr, compareSheetIndex }: TimelineViewProps) {
+  const [numSteps, setNumSteps] = useState(50);
+  const [stepsInput, setStepsInput] = useState("50");
+  const [hoverPos, setHoverPos] = useState<{ xFrac: number; yFrac: number } | null>(null);
+
+  const timelineResult = useMemo(() => {
+    try {
+      return { data: computeChainTimeline(cell, addr, numSteps, allSheets, sheetIndex), error: null };
+    } catch (e) {
+      return { data: [], error: (e as Error).message };
+    }
+  }, [cell, addr, numSteps, allSheets, sheetIndex]);
+  const timeline = timelineResult.data;
+
+  const compareTimeline = useMemo(() => {
+    if (!compareCell || !compareAddr || compareSheetIndex === undefined) return [];
+    try {
+      return computeChainTimeline(compareCell, compareAddr, numSteps, allSheets, compareSheetIndex);
+    } catch {
+      return [];
+    }
+  }, [compareCell, compareAddr, compareSheetIndex, numSteps, allSheets]);
+
+  if (timelineResult.error) {
+    return <div className="detail-body"><span className="compare-error">{timelineResult.error}</span></div>;
+  }
+  if (timeline.length === 0) return null;
+
+  // Compute Y range from p5/p95 across all steps (include comparison)
+  let yMin = Infinity, yMax = -Infinity;
+  for (const s of timeline) {
+    if (s.p5 < yMin) yMin = s.p5;
+    if (s.p95 > yMax) yMax = s.p95;
+  }
+  for (const s of compareTimeline) {
+    if (s.p5 < yMin) yMin = s.p5;
+    if (s.p95 > yMax) yMax = s.p95;
+  }
+  const yPad = (yMax - yMin) * 0.05 || 1;
+  yMin -= yPad;
+  yMax += yPad;
+  const yRange = yMax - yMin;
+  const xMax = timeline.length - 1;
+
+  function toXPct(step: number): number { return xMax > 0 ? (step / xMax) * 100 : 50; }
+  function toYPct(val: number): number { return yRange > 0 ? ((yMax - val) / yRange) * 100 : 50; }
+  function fromYPct(pct: number): number { return yMax - (pct / 100) * yRange; }
+
+  type TimelineStep = typeof timeline[0];
+  function svgLine(data: TimelineStep[], getter: (s: TimelineStep) => number): string {
+    return data.map(s => `${toXPct(s.step)},${toYPct(getter(s))}`).join(" ");
+  }
+  function svgBand(data: TimelineStep[], upper: (s: TimelineStep) => number, lower: (s: TimelineStep) => number): string {
+    return svgLine(data, upper) + " " + [...data].reverse().map(s => `${toXPct(s.step)},${toYPct(lower(s))}`).join(" ");
+  }
+
+  const medianLine = svgLine(timeline, s => s.p50);
+  const outerBand = svgBand(timeline, s => s.p95, s => s.p5);
+  const innerBand = svgBand(timeline, s => s.p75, s => s.p25);
+
+  const cmpMedianLine = compareTimeline.length > 0 ? svgLine(compareTimeline, s => s.p50) : null;
+  const cmpOuterBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p95, s => s.p5) : null;
+  const cmpInnerBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p75, s => s.p25) : null;
+
+  // Hover: compute step and y value
+  const hoverStep = hoverPos !== null ? Math.round(hoverPos.xFrac * xMax) : null;
+  const hoverY = hoverPos !== null ? fromYPct(hoverPos.yFrac * 100) : null;
+  const hoveredStats = hoverStep !== null && hoverStep >= 0 && hoverStep < timeline.length ? timeline[hoverStep] : null;
+  const cmpHoveredStats = hoverStep !== null && hoverStep >= 0 && hoverStep < compareTimeline.length ? compareTimeline[hoverStep] : null;
+
+  // Y-axis gridlines: pick ~4 nice round values
+  const yGridLines = niceGridLines(yMin, yMax, 4);
+  const xGridLines = niceGridLines(0, numSteps, 6).filter(v => v > 0 && v < numSteps);
+
+  function commitSteps() {
+    const n = parseInt(stepsInput, 10);
+    if (!isNaN(n) && n > 0) {
+      setNumSteps(n);
+      setStepsInput(String(n));
+    } else {
+      setStepsInput(String(numSteps));
+    }
+  }
+
+  return (
+    <div className="detail-body timeline-body">
+      <div className="timeline-controls">
+        <label>
+          Steps: <input
+            type="number"
+            className="timeline-steps-input"
+            value={stepsInput}
+            onChange={e => {
+              setStepsInput(e.target.value);
+              const n = parseInt(e.target.value, 10);
+              if (!isNaN(n) && n > 0) setNumSteps(n);
+            }}
+            onBlur={commitSteps}
+            onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter") commitSteps(); }}
+            min={1}
+            max={10000}
+          />
+        </label>
+        <span className="timeline-legend">
+          <span className="timeline-legend-outer">P5–P95</span>
+          <span className="timeline-legend-inner">P25–P75</span>
+          <span className="timeline-legend-median">Median</span>
+        </span>
+        {hoveredStats && (
+          <span className="timeline-hover-stats">
+            Step {hoveredStats.step}: median {formatNumber(hoveredStats.p50)}, P5–P95: {formatNumber(hoveredStats.p5)}–{formatNumber(hoveredStats.p95)}
+          </span>
+        )}
+      </div>
+      <div className="timeline-chart-area">
+        <div className="timeline-yaxis">
+          {yGridLines.map(v => (
+            <span key={v} className="timeline-ylabel" style={{ bottom: `${((v - yMin) / yRange) * 100}%` }}>
+              {formatNumber(v)}
+            </span>
+          ))}
+        </div>
+        <div
+          className="timeline-chart"
+          onMouseMove={e => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setHoverPos({
+              xFrac: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+              yFrac: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+            });
+          }}
+          onMouseLeave={() => setHoverPos(null)}
+        >
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="timeline-svg">
+            <defs>
+              <pattern id="cmp-hatch-outer" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+                <rect width="6" height="6" fill="rgba(230, 150, 50, 0.08)" />
+                <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(230, 150, 50, 0.2)" strokeWidth="1.5" />
+              </pattern>
+              <pattern id="cmp-hatch-inner" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)">
+                <rect width="4" height="4" fill="rgba(230, 150, 50, 0.15)" />
+                <line x1="0" y1="0" x2="0" y2="4" stroke="rgba(230, 150, 50, 0.35)" strokeWidth="1.5" />
+              </pattern>
+            </defs>
+            {/* Gridlines */}
+            {yGridLines.map(v => (
+              <line key={`y${v}`} x1="0" x2="100" y1={toYPct(v)} y2={toYPct(v)} className="timeline-gridline" />
+            ))}
+            {xGridLines.map(v => (
+              <line key={`x${v}`} x1={toXPct(v)} x2={toXPct(v)} y1="0" y2="100" className="timeline-gridline" />
+            ))}
+            <polygon points={outerBand} className="timeline-band-outer" />
+            <polygon points={innerBand} className="timeline-band-inner" />
+            <polyline points={medianLine} className="timeline-median" />
+            {cmpOuterBand && <polygon points={cmpOuterBand} className="timeline-cmp-band-outer" />}
+            {cmpInnerBand && <polygon points={cmpInnerBand} className="timeline-cmp-band-inner" />}
+            {cmpMedianLine && <polyline points={cmpMedianLine} className="timeline-cmp-median" />}
+          </svg>
+          {hoverPos !== null && (
+            <>
+              <div className="timeline-cursor" style={{ left: `${hoverPos.xFrac * 100}%` }} />
+              <div className="timeline-cursor-h" style={{ top: `${hoverPos.yFrac * 100}%` }} />
+              <span
+                className="timeline-hover-label timeline-hover-y-above"
+                style={{ top: `${hoverPos.yFrac * 100}%` }}
+              >
+                {hoveredStats && hoverY !== null && (
+                  <span className="timeline-pct-at-cursor">{interpolatePct(hoverY, hoveredStats)}</span>
+                )}
+                <br />
+                {hoverY !== null ? formatNumber(hoverY) : ""}
+              </span>
+              {cmpHoveredStats && hoverY !== null && (
+                <span
+                  className="timeline-hover-label timeline-hover-y-below"
+                  style={{ top: `${hoverPos.yFrac * 100}%` }}
+                >
+                  {interpolatePct(hoverY, cmpHoveredStats)}
+                </span>
+              )}
+              <span
+                className="timeline-hover-label timeline-hover-t"
+                style={{ left: `${hoverPos.xFrac * 100}%` }}
+              >
+                t={hoverStep ?? ""}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="timeline-axis">
+        <span style={{ position: "absolute", left: 0 }}>0</span>
+        {xGridLines.map(v => (
+          <span key={v} style={{ position: "absolute", left: `${toXPct(v)}%`, transform: "translateX(-50%)" }}>{v}</span>
+        ))}
+        <span style={{ position: "absolute", right: 0 }}>{numSteps}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Interpolate a percentile string from known breakpoints (p5, p25, p50, p75, p95) */
+function interpolatePct(
+  y: number,
+  stats: { p5: number; p25: number; p50: number; p75: number; p95: number },
+): string {
+  const pts: [number, number][] = [
+    [stats.p5, 5], [stats.p25, 25], [stats.p50, 50], [stats.p75, 75], [stats.p95, 95],
+  ];
+  if (y <= pts[0][0]) return "≤P5";
+  if (y >= pts[4][0]) return "≥P95";
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [v0, p0] = pts[i];
+    const [v1, p1] = pts[i + 1];
+    if (y <= v1) {
+      const frac = v1 !== v0 ? (y - v0) / (v1 - v0) : 0;
+      return `P${Math.round(p0 + frac * (p1 - p0))}`;
+    }
+  }
+  return "≥P95";
+}
+
+/** Pick ~count nice round gridline values between min and max */
+function niceGridLines(min: number, max: number, count: number): number[] {
+  const range = max - min;
+  if (range <= 0) return [];
+  const rough = range / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  let step: number;
+  if (rough / mag >= 5) step = 5 * mag;
+  else if (rough / mag >= 2) step = 2 * mag;
+  else step = mag;
+  const lines: number[] = [];
+  const start = Math.ceil(min / step) * step;
+  for (let v = start; v <= max; v += step) {
+    lines.push(v);
+  }
+  return lines;
 }

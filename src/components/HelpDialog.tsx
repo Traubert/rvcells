@@ -101,9 +101,11 @@ const PAGES = [
               <tr><td><code>Bernoulli(p)</code></td><td>Samples 0 or 1 with probability p</td></tr>
               <tr><td><code>Discrete(p1, p2, ...)</code></td><td>Samples from &#123;0, 1, ...&#125; with given probabilities</td></tr>
               <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
+              <tr><td><code>Chain(body, init)</code></td><td>Iterative process; body uses own variable as previous step</td></tr>
+              <tr><td><code>ChainIndex(chain, n)</code></td><td>Distribution at step n of a Chain</td></tr>
             </tbody>
           </table>
-          <p className="help-note">Use <code>if()</code> + <code>Bernoulli()</code> for Markov chains. <code>resample()</code> re-evaluates the entire sub-DAG with fresh random numbers.</p>
+          <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Use <code>_t</code> inside the body for the current step number.</p>
         </section>
       </>
     ),

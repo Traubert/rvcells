@@ -645,8 +645,8 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
         </table>
       </div>
 
-      {/* Detail panel for selected cell — only for single distribution selection */}
-      {selectedAddr && !isMultiSelect && sheet.cells.get(selectedAddr)?.result?.kind === "samples" && (
+      {/* Detail panel for selected cell — distributions and chains */}
+      {selectedAddr && !isMultiSelect && (sheet.cells.get(selectedAddr)?.result?.kind === "samples" || sheet.cells.get(selectedAddr)?.chainBody) && (
         <DetailPanel
           addr={selectedAddr}
           cell={sheet.cells.get(selectedAddr)!}
@@ -675,6 +675,13 @@ function CellDisplay({ cell }: { cell: Cell | undefined }) {
       return <span className="cell-text">{cell.content.value}</span>;
     }
     return null;
+  }
+
+  if (cell.chainBody) {
+    const initDisplay = cell.result.kind === "scalar"
+      ? formatNumber(cell.result.value)
+      : formatNumber(summarize(cell.result).mean);
+    return <span className="cell-chain" title="Chain (click to step through)">⟳ {initDisplay}</span>;
   }
 
   if (cell.result.kind === "scalar") {

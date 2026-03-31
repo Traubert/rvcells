@@ -264,6 +264,32 @@ Each sample's income depends on whether that particular sample is employed or no
 
 This returns 0 with probability 80%, 1 with probability 15%, and 2 with probability 5%. Combined with nested `if()` calls or arithmetic on the state values, you can build arbitrarily complex multi-state Markov chains.
 
+### Chain: iterative processes in a single cell
+
+The row-per-step approach works but is tedious for long time horizons. The `Chain()` function collapses an iterative process into one cell:
+
+```
+wealth = Chain(wealth * stock_return + income - expenses, 10000)
+```
+
+The first argument is the body expression — evaluated iteratively, where the cell's own variable name (`wealth`) refers to the previous step's value. The second argument is the initial value (scalar or distribution). Referenced distribution cells are automatically resampled each step, so `stock_return` gets fresh random draws without needing `resample()`.
+
+**Accessing steps.** Referencing a Chain cell directly returns its initial value. Use `ChainIndex(chain, step)` to get the distribution at a specific step:
+
+```
+= ChainIndex(wealth, 120)    (distribution after 120 steps)
+```
+
+**Cross-chain synchronization.** If a Chain body references another Chain cell, the two automatically stay in lockstep — step 5 of the outer chain uses step 5 of the inner chain.
+
+**The `_t` variable.** Inside a Chain body, `_t` gives the current step number, enabling time-dependent formulas:
+
+```
+x = Chain(x * (1 + 0.001 * _t), 100)
+```
+
+**Timeline visualization.** Click a Chain cell to see the detail panel. Use the step controls (◀ ▶) to walk through individual steps — the histogram, stats, and sensitivity tabs update per step. The **Timeline** tab shows a fan chart of the full trajectory: P5–P95 and P25–P75 percentile bands with the median line. Drag the resize handle at the top of the detail panel to expand the chart.
+
 ## Analysis views
 
 When you click on a distribution cell that contains a formula, the detail panel shows four tabs:

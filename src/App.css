@@ -782,6 +782,10 @@ thead .row-header {
   color: var(--text-bright);
 }
 
+.cell-chain {
+  color: #8b9cf7;
+}
+
 .cell-distribution {
   /* color set dynamically based on uncertainty */
 }
@@ -797,10 +801,67 @@ thead .row-header {
   padding: 8px 16px;
 }
 
+.detail-panel-resized {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detail-resize-handle {
+  height: 4px;
+  margin: -8px -16px 4px;
+  cursor: ns-resize;
+  background: transparent;
+  position: relative;
+}
+
+.detail-resize-handle::after {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 auto;
+  position: relative;
+  top: 1px;
+}
+
+.detail-resize-handle:hover::after {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .detail-body {
   display: flex;
   gap: 16px;
   align-items: stretch;
+}
+
+.detail-panel-resized .detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-panel-resized .analysis-scroll {
+  max-height: none;
+  min-height: 0;
+}
+
+.detail-panel-resized .timeline-chart {
+  height: auto;
+  flex: 1;
+  min-height: 80px;
+}
+
+.detail-panel-resized .timeline-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-panel-resized .timeline-chart-area {
+  flex: 1;
+  min-height: 0;
 }
 
 .detail-chart {
@@ -836,6 +897,8 @@ thead .row-header {
 .detail-histogram {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .hist-chart-area svg {
@@ -843,6 +906,15 @@ thead .row-header {
   height: 180px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
+}
+
+.detail-panel-resized .hist-chart-area {
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-panel-resized .hist-chart-area svg {
+  height: 100%;
 }
 
 .hist-bar-compare {
@@ -1078,6 +1150,8 @@ thead .row-header {
 .detail-stats {
   font-size: 12px;
   flex-shrink: 0;
+  flex-grow: 0;
+  align-self: flex-start;
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 8px 14px;
@@ -1205,7 +1279,6 @@ thead .row-header {
 .analysis-scroll {
   flex: 1;
   overflow-y: auto;
-  max-height: 180px;
 }
 
 /* Sensitivity table */
@@ -1369,4 +1442,224 @@ thead .row-header {
 
 .sens-inline td {
   opacity: 0.6;
+}
+
+/* Chain step controls */
+.chain-step-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.chain-step-label {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text);
+  min-width: 50px;
+  text-align: center;
+}
+
+/* Timeline view */
+.timeline-body {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.timeline-steps-input {
+  width: 60px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.timeline-hover-stats {
+  color: var(--text-dim);
+}
+
+.timeline-legend {
+  display: flex;
+  gap: 10px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.timeline-legend-outer::before,
+.timeline-legend-inner::before,
+.timeline-legend-median::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 8px;
+  margin-right: 3px;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+
+.timeline-legend-outer::before {
+  background: rgba(108, 99, 255, 0.15);
+  border: 1px solid rgba(108, 99, 255, 0.3);
+}
+
+.timeline-legend-inner::before {
+  background: rgba(108, 99, 255, 0.3);
+  border: 1px solid rgba(108, 99, 255, 0.5);
+}
+
+.timeline-legend-median::before {
+  height: 0;
+  border-top: 2px solid var(--hist-bar);
+  margin-top: 3px;
+}
+
+.timeline-chart-area {
+  display: flex;
+  gap: 0;
+}
+
+.timeline-yaxis {
+  position: relative;
+  width: 55px;
+  flex-shrink: 0;
+}
+
+.timeline-ylabel {
+  position: absolute;
+  right: 4px;
+  transform: translateY(50%);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  color: rgba(200, 200, 220, 0.6);
+  white-space: nowrap;
+}
+
+.timeline-chart {
+  position: relative;
+  height: 150px;
+  flex: 1;
+  border-left: 1px solid rgba(200, 200, 220, 0.4);
+  border-bottom: 1px solid rgba(200, 200, 220, 0.4);
+}
+
+.timeline-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.timeline-gridline {
+  stroke: rgba(200, 200, 220, 0.15);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 3 3;
+}
+
+.timeline-band-outer {
+  fill: rgba(108, 99, 255, 0.12);
+}
+
+.timeline-band-inner {
+  fill: rgba(108, 99, 255, 0.25);
+}
+
+.timeline-median {
+  fill: none;
+  stroke: var(--hist-bar);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.timeline-cmp-band-outer {
+  fill: url(#cmp-hatch-outer);
+}
+
+.timeline-cmp-band-inner {
+  fill: url(#cmp-hatch-inner);
+}
+
+.timeline-cmp-median {
+  fill: none;
+  stroke: rgb(230, 150, 50);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.timeline-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid rgba(200, 200, 220, 0.6);
+  pointer-events: none;
+}
+
+.timeline-cursor-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid rgba(200, 200, 220, 0.6);
+  pointer-events: none;
+}
+
+.timeline-hover-label {
+  position: absolute;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: rgba(220, 220, 230, 0.95);
+  white-space: nowrap;
+  background: rgba(30, 30, 40, 0.85);
+  padding: 1px 4px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.timeline-hover-y-above {
+  left: 0 !important;
+  transform: translate(-100%, -100%);
+  margin-left: -4px;
+  padding-bottom: 0;
+  text-align: right;
+  line-height: 1.3;
+}
+
+.timeline-hover-y-below {
+  left: 0 !important;
+  transform: translate(-100%, 0%);
+  margin-left: -4px;
+  padding-top: 0;
+  color: rgba(230, 170, 80, 0.9);
+}
+
+.timeline-pct-at-cursor {
+  opacity: 0.6;
+  margin-left: 2px;
+}
+
+.timeline-hover-t {
+  top: auto !important;
+  bottom: 0;
+  transform: translate(-50%, 100%);
+  margin-bottom: -2px;
+}
+
+.timeline-axis {
+  position: relative;
+  height: 16px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  color: rgba(200, 200, 220, 0.6);
+  margin-left: 55px;
 }

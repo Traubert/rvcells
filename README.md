@@ -16,6 +16,9 @@ A spreadsheet where **random variables are a first-class cell type**. Define unc
 - **Detail panel.** Click a distribution cell to see its histogram, percentiles, and summary statistics. The histogram supports hover to see per-bin percentages.
 - **Lockable histogram range.** Lock the x-axis range to compare distributions on the same scale, with zoom +/− buttons and a recentre control.
 - **Built-in functions.** `abs`, `sqrt`, `exp`, `log`, `pow`, `min`, `max`, `floor`, `ceil`, `round`, `clamp`, `if` — all work elementwise on distributions.
+- **Chain processes.** `Chain(wealth * return, 1000)` defines an iterative Monte Carlo process in a single cell. Referenced distributions are auto-resampled each step. Access any step with `ChainIndex()`, or view the full trajectory as a fan chart in the Timeline tab.
+- **Sensitivity analysis.** Correlation, variance contribution, and tornado diagram tabs show how each input distribution affects the output.
+- **Browser storage.** Save/load workbooks to localStorage (Ctrl+S/O), with mass export/import as zip.
 - **Cycle detection.** Circular references are caught at edit time and shown as an error on the offending cell.
 
 ## Tech stack

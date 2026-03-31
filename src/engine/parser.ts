@@ -1,4 +1,5 @@
 import type { CellContent, Distribution, Expr } from "./types";
+import { DISTRIBUTION_NAMES } from "../constants";
 
 /**
  * Parse raw cell input into structured CellContent.
@@ -104,6 +105,8 @@ function parseDistribution(s: string): Distribution | null {
   if (!match) return null;
 
   const name = match[1];
+  if (!DISTRIBUTION_NAMES.has(name)) return null;
+
   const args = match[2].split(",").map((a) => {
     const n = Number(a.trim());
     if (isNaN(n)) throw new Error("Bad distribution argument");

@@ -793,3 +793,131 @@ describe("summary statistics", () => {
     expect(stats.p75).toBeLessThan(stats.p95);
   });
 });
+
+describe("Chain", () => {
+  it("scalar chain: x = Chain(x + 1, 0), ChainIndex(x, 5) → 5", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 1, 0)",
+      B1: "= ChainIndex(x, 5)",
+    });
+    // Direct reference to chain returns initial value
+    expect(scalarValue(sheet, "A1")).toBe(0);
+    // ChainIndex returns step 5: 0+1+1+1+1+1 = 5
+    expect(mean(sheet, "B1")).toBeCloseTo(5, 5);
+  });
+
+  it("chain with distribution produces samples", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + Normal(0, 1), 0)",
+      B1: "= ChainIndex(x, 10)",
+    }, 10000);
+    const cell = sheet.cells.get("B1")!;
+    expect(cell.result?.kind).toBe("samples");
+    // After 10 steps of adding N(0,1), mean ≈ 0, std ≈ sqrt(10)
+    const stats = summarize(cell.result!);
+    expect(stats.mean).toBeCloseTo(0, 0);
+    expect(stats.std).toBeCloseTo(Math.sqrt(10), 0);
+  });
+
+  it("non-scalar initial value", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 1, Normal(100, 10))",
+      B1: "= ChainIndex(x, 0)",
+      C1: "= ChainIndex(x, 3)",
+    }, 10000);
+    // Step 0 is the initial distribution
+    const step0 = sheet.cells.get("B1")!;
+    expect(step0.result?.kind).toBe("samples");
+    expect(summarize(step0.result!).mean).toBeCloseTo(100, 0);
+    // Step 3 adds 3 to each sample
+    expect(summarize(sheet.cells.get("C1")!.result!).mean).toBeCloseTo(103, 0);
+  });
+
+  it("self-reference does not cause cycle error", () => {
+    const sheet = makeSheet({ A1: "x = Chain(x * 2, 1)" });
+    expect(sheet.cells.get("A1")!.error).toBeUndefined();
+    expect(scalarValue(sheet, "A1")).toBe(1);
+  });
+
+  it("auto-resamples referenced distribution cells each step", () => {
+    const sheet = makeSheet({
+      A1: "ret = Normal(0, 1)",
+      A2: "x = Chain(x + ret, 0)",
+      B2: "= ChainIndex(x, 100)",
+    }, 10000);
+    const stats = summarize(sheet.cells.get("B2")!.result!);
+    // After 100 steps of adding N(0,1), std ≈ sqrt(100) = 10
+    // If NOT resampled, std would be ≈ 100 (same draw every step)
+    expect(stats.std).toBeCloseTo(10, 0);
+  });
+
+  it("cross-chain auto-sync", () => {
+    const sheet = makeSheet({
+      A1: "a = Chain(a + 1, 0)",
+      A2: "b = Chain(b + a, 0)",
+      B2: "= ChainIndex(b, 3)",
+    });
+    // a at step 1=1, 2=2, 3=3
+    // b at step 1=b0+a1=0+1=1, step 2=1+2=3, step 3=3+3=6
+    expect(mean(sheet, "B2")).toBeCloseTo(6, 5);
+  });
+
+  it("_t variable gives current step number", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + _t, 0)",
+      B1: "= ChainIndex(x, 3)",
+    });
+    // step 1: 0 + 1 = 1, step 2: 1 + 2 = 3, step 3: 3 + 3 = 6
+    expect(mean(sheet, "B1")).toBeCloseTo(6, 5);
+  });
+
+  it("unknown variable in chain body is an error at input time", () => {
+    const sheet = makeSheet({ A1: "foo = Chain(bar + 1, 0)" });
+    expect(sheet.cells.get("A1")!.error).toContain("Unknown variable in Chain body: bar");
+  });
+
+  it("_t cannot be used as a variable name", () => {
+    const sheet = makeSheet({ A1: "_t = 5" });
+    expect(sheet.cells.get("A1")!.error).toContain("reserved");
+  });
+
+  it("cache invalidation on recalculate", () => {
+    const sheet = makeSheet({
+      A1: "init = 10",
+      A2: "x = Chain(x + 1, init)",
+      B2: "= ChainIndex(x, 5)",
+    });
+    expect(mean(sheet, "B2")).toBeCloseTo(15, 5);
+    // Change initial value
+    setCellRaw(sheet, "A1", "init = 20");
+    expect(mean(sheet, "B2")).toBeCloseTo(25, 5);
+  });
+
+  it("direct reference to chain cell returns initial value", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 1, 42)",
+      B1: "= x",
+    });
+    expect(scalarValue(sheet, "B1")).toBe(42);
+  });
+
+  it("chain self-reference by cell address", () => {
+    const sheet = makeSheet({
+      A1: "= Chain(A1 + 1, 0)",
+      B1: "= ChainIndex(A1, 5)",
+    });
+    expect(sheet.cells.get("A1")!.error).toBeUndefined();
+    expect(scalarValue(sheet, "A1")).toBe(0);
+    expect(mean(sheet, "B1")).toBeCloseTo(5, 5);
+  });
+
+  it("non-chain self-reference is a cycle error", () => {
+    const sheet = makeSheet({ A1: "= A1 + 1" });
+    expect(sheet.cells.get("A1")!.error).toBeDefined();
+  });
+
+  it("non-chain variable self-reference is a cycle error", () => {
+    const sheet = makeSheet({ A1: "x = x + 1" });
+    expect(sheet.cells.get("A1")!.error).toBeDefined();
+  });
+});
