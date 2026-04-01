@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { examples } from "../examples";
+import type { FileFormat } from "../engine/file";
 
 const PAGES = [
   {
@@ -112,15 +114,18 @@ const PAGES = [
   },
 ];
 
+const TOTAL_PAGES = PAGES.length + 1; // +1 for Examples page
+
 interface HelpDialogProps {
   onClose: () => void;
+  onLoadExample: (data: FileFormat) => void;
 }
 
-export function HelpDialog({ onClose }: HelpDialogProps) {
+export function HelpDialog({ onClose, onLoadExample }: HelpDialogProps) {
   const [page, setPage] = useState(0);
 
   function prev() { setPage((p) => Math.max(0, p - 1)); }
-  function next() { setPage((p) => Math.min(PAGES.length - 1, p + 1)); }
+  function next() { setPage((p) => Math.min(TOTAL_PAGES - 1, p + 1)); }
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -131,6 +136,8 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
+
+  const pageTitle = page < PAGES.length ? PAGES[page].title : "Examples";
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
@@ -144,18 +151,41 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
             &#9664;
           </button>
           <span className="help-page-indicator">
-            Help {page + 1}/{PAGES.length} — {PAGES[page].title}
+            Help {page + 1}/{TOTAL_PAGES} — {pageTitle}
           </span>
           <button
             className="help-nav-arrow"
             onClick={next}
-            disabled={page === PAGES.length - 1}
+            disabled={page === TOTAL_PAGES - 1}
           >
             &#9654;
           </button>
         </div>
         <div className="help-body">
-          {PAGES[page].content}
+          {page < PAGES.length ? PAGES[page].content : (
+            <>
+              <p className="help-note" style={{ marginBottom: 12 }}>
+                Load an example workbook to explore how rvcells works. This will replace your current workbook.
+              </p>
+              {examples.map((ex) => (
+                <div key={ex.name} className="example-row">
+                  <div className="example-info">
+                    <strong>{ex.name}</strong>
+                    <span className="example-desc">{ex.description}</span>
+                  </div>
+                  <button
+                    className="dialog-button example-load"
+                    onClick={() => {
+                      onLoadExample(ex.data);
+                      onClose();
+                    }}
+                  >
+                    Load
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -10,6 +10,7 @@ import type { WorkbookEntry } from "./engine/storage";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import type { Sheet } from "./engine/types";
+import type { FileFormat } from "./engine/file";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "./constants";
 import "./App.css";
 
@@ -171,6 +172,15 @@ export default function App() {
     setActiveIndex(0);
     bump();
   }, [bump, showRenameNotice]);
+
+  const handleLoadExample = useCallback((data: FileFormat) => {
+    const result = deserializeFile(data);
+    sheetsRef.current = result.sheets;
+    nameRef.current = result.name;
+    workbookIdRef.current = null;
+    setActiveIndex(0);
+    bump();
+  }, [bump]);
 
   // Mass export all saved workbooks as zip
   const handleMassExport = useCallback(async () => {
@@ -341,7 +351,7 @@ export default function App() {
         onOpen={handleStorageOpen}
       />
       {helpOpen && (
-        <HelpDialog onClose={() => setHelpOpen(false)} />
+        <HelpDialog onClose={() => setHelpOpen(false)} onLoadExample={handleLoadExample} />
       )}
       {settingsOpen && (
         <SettingsDialog

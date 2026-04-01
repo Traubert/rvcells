@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "name": "Project cost estimate",
+  "settings": { "numSamples": 10000 },
+  "sheets": [
+    {
+      "name": "Costs",
+      "cells": {
+        "A1": "Task",
+        "B1": "Hours (estimate)",
+        "C1": "Hourly rate ($)",
+        "D1": "Cost ($)",
+        "A3": "Backend API",
+        "B3": "api = Triangular(80, 120, 200)",
+        "C3": "apiRate = Normal(150, 15)",
+        "D3": ":= api * apiRate",
+        "A4": "Frontend UI",
+        "B4": "ui = Triangular(60, 100, 180)",
+        "C4": "uiRate = Normal(130, 15)",
+        "D4": ":= ui * uiRate",
+        "A5": "Database & infra",
+        "B5": "db = Triangular(30, 50, 100)",
+        "C5": "dbRate = Normal(160, 20)",
+        "D5": ":= db * dbRate",
+        "A6": "Testing & QA",
+        "B6": "qa = Triangular(40, 60, 120)",
+        "C6": "qaRate = Normal(120, 10)",
+        "D6": ":= qa * qaRate",
+        "A7": "Project management",
+        "B7": "pm = Triangular(30, 50, 80)",
+        "C7": "pmRate = Normal(140, 15)",
+        "D7": ":= pm * pmRate",
+        "A9": "Subtotal",
+        "D9": "subtotal := D3 + D4 + D5 + D6 + D7",
+        "A10": "Contingency (% of subtotal)",
+        "B10": "contingencyPct = Uniform(5, 20)",
+        "D10": "contingency := subtotal * contingencyPct / 100",
+        "A12": "Total project cost",
+        "D12": "total := subtotal + contingency",
+        "A14": "Total hours",
+        "B14": "totalHours := api + ui + db + qa + pm",
+        "A15": "Average effective rate",
+        "D15": ":= total / totalHours"
+      }
+    }
+  ]
+}

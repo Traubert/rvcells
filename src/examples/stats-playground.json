@@ -1,0 +1,124 @@
+{
+  "version": 2,
+  "name": "Stats playground",
+  "settings": { "numSamples": 10000 },
+  "sheets": [
+    {
+      "name": "Normal",
+      "cells": {
+        "A1": "Normal distributions",
+        "A2": "Click each cell, then use Lock Range to compare on the same scale.",
+        "A4": "Standard",
+        "B4": ":= Normal(0, 1)",
+        "A5": "Wide",
+        "B5": ":= Normal(0, 3)",
+        "A6": "Narrow",
+        "B6": ":= Normal(0, 0.3)",
+        "A7": "Shifted right",
+        "B7": ":= Normal(5, 1)",
+        "A8": "Shifted left",
+        "B8": ":= Normal(-5, 1)",
+        "A10": "Sum of normals",
+        "B10": ":= B4 + B7",
+        "A11": "Product of normals",
+        "B11": ":= Normal(10, 2) * Normal(5, 1)"
+      }
+    },
+    {
+      "name": "LogNormal",
+      "cells": {
+        "A1": "Log-normal distributions",
+        "A2": "Always positive, right-skewed. Useful for prices, sizes, durations.",
+        "A4": "Low variance",
+        "B4": ":= LogNormal(0, 0.25)",
+        "A5": "Medium variance",
+        "B5": ":= LogNormal(0, 0.5)",
+        "A6": "High variance",
+        "B6": ":= LogNormal(0, 1.0)",
+        "A7": "Very high variance",
+        "B7": ":= LogNormal(0, 1.5)",
+        "A9": "Shifted scale",
+        "B9": ":= LogNormal(2, 0.5)",
+        "A10": "Large scale",
+        "B10": ":= LogNormal(4, 0.3)"
+      }
+    },
+    {
+      "name": "Uniform & Triangular",
+      "cells": {
+        "A1": "Uniform distributions",
+        "A3": "Unit interval",
+        "B3": ":= Uniform(0, 1)",
+        "A4": "Wider range",
+        "B4": ":= Uniform(-10, 10)",
+        "A5": "Narrow range",
+        "B5": ":= Uniform(4, 6)",
+        "A7": "Triangular distributions",
+        "A8": "Symmetric",
+        "B8": ":= Triangular(0, 5, 10)",
+        "A9": "Left-skewed",
+        "B9": ":= Triangular(0, 8, 10)",
+        "A10": "Right-skewed",
+        "B10": ":= Triangular(0, 2, 10)",
+        "A11": "Very narrow peak",
+        "B11": ":= Triangular(4, 5, 6)",
+        "A13": "Sum: Uniform + Triangular",
+        "B13": ":= B3 + B8"
+      }
+    },
+    {
+      "name": "Beta",
+      "cells": {
+        "A1": "Beta distributions (on [0, 1])",
+        "A2": "Great for modelling probabilities, rates, proportions.",
+        "A4": "Uniform (1, 1)",
+        "B4": ":= Beta(1, 1)",
+        "A5": "Symmetric bell (5, 5)",
+        "B5": ":= Beta(5, 5)",
+        "A6": "Sharp bell (20, 20)",
+        "B6": ":= Beta(20, 20)",
+        "A7": "Skewed right (2, 5)",
+        "B7": ":= Beta(2, 5)",
+        "A8": "Skewed left (5, 2)",
+        "B8": ":= Beta(5, 2)",
+        "A9": "U-shaped (0.5, 0.5)",
+        "B9": ":= Beta(0.5, 0.5)",
+        "A10": "Strong right (1, 3)",
+        "B10": ":= Beta(1, 3)",
+        "A11": "Strong left (3, 1)",
+        "B11": ":= Beta(3, 1)",
+        "A13": "Scaled: conversion rate",
+        "B13": "convRate = Beta(10, 90)",
+        "A14": "Visitors",
+        "B14": "visitors = 10000",
+        "A15": "Expected conversions",
+        "B15": ":= convRate * visitors"
+      }
+    },
+    {
+      "name": "Discrete",
+      "cells": {
+        "A1": "Discrete distributions",
+        "A3": "Coin flip",
+        "B3": ":= Bernoulli(0.5)",
+        "A4": "Biased coin (80%)",
+        "B4": ":= Bernoulli(0.8)",
+        "A5": "Rare event (5%)",
+        "B5": ":= Bernoulli(0.05)",
+        "A7": "Three outcomes",
+        "B7": ":= Discrete(0.5, 0.3, 0.2)",
+        "A8": "Uniform 4-sided",
+        "B8": ":= Discrete(0.25, 0.25, 0.25, 0.25)",
+        "A10": "Mixing discrete + continuous",
+        "A11": "Has defect?",
+        "B11": "defect = Bernoulli(0.02)",
+        "A12": "Repair cost",
+        "B12": ":= if(defect, LogNormal(6, 1), 0)",
+        "A13": "Units shipped",
+        "B13": "units = 1000",
+        "A14": "Total repair cost",
+        "B14": ":= B12 * units"
+      }
+    }
+  ]
+}

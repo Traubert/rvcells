@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "name": "Retirement savings",
+  "settings": { "numSamples": 10000 },
+  "sheets": [
+    {
+      "name": "Plan",
+      "cells": {
+        "A1": "Current age",
+        "B1": "age = 35",
+        "A2": "Retirement age",
+        "B2": "retireAge = 65",
+        "A3": "Years to retirement",
+        "B3": "years = retireAge - age",
+        "A5": "Current savings ($)",
+        "B5": "savings = 80000",
+        "A6": "Annual contribution ($)",
+        "B6": "contrib = Normal(18000, 2000)",
+        "A7": "Annual return (%)",
+        "B7": "returnPct = Normal(7, 3)",
+        "A8": "Inflation (%)",
+        "B8": "inflation = Normal(2.5, 0.8)",
+        "A9": "Real return (%)",
+        "B9": "realReturn := (returnPct - inflation) / 100",
+        "A11": "Nest egg at retirement ($)",
+        "B11": "nestEgg := Chain(nestEgg * (1 + realReturn) + contrib, savings)",
+        "A12": "Steps",
+        "B12": ":= ChainIndex(nestEgg, years)",
+        "A14": "Annual spending in retirement ($)",
+        "B14": "spending = Normal(50000, 8000)",
+        "A15": "Years of spending covered",
+        "B15": ":= B12 / spending"
+      }
+    }
+  ]
+}
