@@ -52,7 +52,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 ### P0 — core loop
 - [x] Editable grid (26 columns × 50 rows)
 - [x] Cell editing: type a number, a distribution spec, or a formula
-- [x] Distribution types: Normal, LogNormal, Uniform, Triangular, Beta
+- [x] Distribution types: Normal, LogNormal, Uniform, Triangular, Beta, Pareto, Poisson, StudentT
 - [x] Formula parser: arithmetic operators (+, -, *, /), cell references (A1, B2), parentheses, unary minus
 - [x] Variable definitions: `name = expr` syntax in any cell, usable by name in other formulas
 - [x] DAG-based recalculation on any cell edit, with cycle detection
@@ -65,7 +65,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Distribution constructors usable in formulas (e.g. `= Normal(100, 10) * 12`)
 - [x] Incremental recalculation (only dirty cells and dependents)
 - [x] Histogram hover showing per-bin percentage
-- [x] Lockable histogram range with zoom +/−, reset, and scroll wheel zoom
+- [x] Lockable histogram range with zoom +/−, reset, scroll wheel zoom, and drag-to-pan
 - [x] Uncertainty-based cell coloring (CV → white-to-orange-to-red interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
 - [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+S save, Ctrl+O open, Ctrl+H help
@@ -117,7 +117,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Shareable via URL (encode state in URL or use a paste service)
 
 ### Additional TODOs
-- [ ] Consider: Pareto distribution, Poisson distribution, logistic distribution, log-logistic distribution
+- [ ] Consider: logistic distribution, log-logistic distribution
 - [x] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
 
 ## Design Principles

@@ -9,7 +9,10 @@ export type Distribution =
   | { type: "LogNormal"; mu: number; sigma: number }
   | { type: "Uniform"; low: number; high: number }
   | { type: "Triangular"; low: number; mode: number; high: number }
-  | { type: "Beta"; alpha: number; beta: number };
+  | { type: "Beta"; alpha: number; beta: number }
+  | { type: "Pareto"; xMin: number; alpha: number }
+  | { type: "Poisson"; lambda: number }
+  | { type: "StudentT"; nu: number; mu: number; sigma: number };
 
 /** AST node types for parsed formulas */
 export type Expr =

@@ -94,6 +94,52 @@ export function sample(dist: Distribution, n: number): Float64Array {
       }
       break;
     }
+    case "Pareto": {
+      // Inverse CDF: x_min / U^(1/alpha)
+      const { xMin, alpha } = dist;
+      const invAlpha = 1 / alpha;
+      for (let i = 0; i < n; i++) {
+        out[i] = xMin / Math.pow(Math.random(), invAlpha);
+      }
+      break;
+    }
+    case "Poisson": {
+      const lambda = dist.lambda;
+      if (lambda < 30) {
+        // Knuth's algorithm for small lambda
+        const L = Math.exp(-lambda);
+        for (let i = 0; i < n; i++) {
+          let k = 0;
+          let p = 1;
+          do {
+            k++;
+            p *= Math.random();
+          } while (p > L);
+          out[i] = k - 1;
+        }
+      } else {
+        // Normal approximation for large lambda
+        fillStdNormal(out);
+        const sqrtLambda = Math.sqrt(lambda);
+        for (let i = 0; i < n; i++) {
+          out[i] = Math.max(0, Math.round(lambda + sqrtLambda * out[i]));
+        }
+      }
+      break;
+    }
+    case "StudentT": {
+      // t(nu) = Normal(0,1) / sqrt(Chi2(nu)/nu)
+      // Chi2(nu) = Gamma(nu/2, 2), so Chi2(nu)/nu = Gamma(nu/2) * 2/nu
+      const { nu, mu, sigma } = dist;
+      const halfNu = nu / 2;
+      const scale = 2 / nu;
+      fillStdNormal(out);
+      for (let i = 0; i < n; i++) {
+        const chi2 = sampleGamma(halfNu) * scale;
+        out[i] = mu + sigma * (out[i] / Math.sqrt(chi2));
+      }
+      break;
+    }
   }
 
   return out;

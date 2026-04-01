@@ -136,7 +136,9 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     [compareResult, lockedRange, autoHist, binCount]
   );
 
-  const maxBin = Math.max(...hist.bins, ...(compareHist?.bins ?? []));
+  // Floor prevents sparse bins from spiking to full height when panning into tails.
+  // With viewBox height 100, maxBin >= 20 means each sample ≤ 5% of chart height.
+  const maxBin = Math.max(20, ...hist.bins, ...(compareHist?.bins ?? []));
   const [guideMode, setGuideMode] = useState<GuideMode>("none");
   const [rangeUnit, setRangeUnit] = useState<"value" | "sigma" | "percentile">("value");
 
@@ -242,6 +244,44 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     }
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
+  });
+
+  // Drag-to-pan on histogram X range
+  const panDragRef = useRef<{ startX: number; startMin: number; startMax: number } | null>(null);
+  useEffect(() => {
+    const el = histChartRef.current;
+    if (!el) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
+      const curMin = isLocked ? lockedRange!.min : autoHist.min;
+      const curMax = isLocked ? lockedRange!.max : autoHist.max;
+      panDragRef.current = { startX: e.clientX, startMin: curMin, startMax: curMax };
+      el!.style.cursor = "grabbing";
+      e.preventDefault();
+    }
+    function handleMouseMove(e: MouseEvent) {
+      if (!panDragRef.current) return;
+      const rect = el!.getBoundingClientRect();
+      const pxDelta = e.clientX - panDragRef.current.startX;
+      const rangeDelta = -(pxDelta / rect.width) * (panDragRef.current.startMax - panDragRef.current.startMin);
+      onLockRange({
+        min: roundForDisplay(panDragRef.current.startMin + rangeDelta),
+        max: roundForDisplay(panDragRef.current.startMax + rangeDelta),
+      });
+    }
+    function handleMouseUp() {
+      if (!panDragRef.current) return;
+      panDragRef.current = null;
+      el!.style.cursor = "";
+    }
+    el.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      el.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
   });
 
   const panelRef = useRef<HTMLDivElement>(null);

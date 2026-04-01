@@ -66,8 +66,44 @@ describe("parseCell", () => {
       expect(parseCell("Triangular(1, 2)").content.kind).toBe("text");
     });
 
+    it("parses Pareto", () => {
+      const { content } = parseCell("Pareto(1, 2.5)");
+      expect(content).toEqual({
+        kind: "distribution",
+        dist: { type: "Pareto", xMin: 1, alpha: 2.5 },
+      });
+    });
+
+    it("parses Poisson", () => {
+      const { content } = parseCell("Poisson(5)");
+      expect(content).toEqual({
+        kind: "distribution",
+        dist: { type: "Poisson", lambda: 5 },
+      });
+    });
+
+    it("parses StudentT with 1 arg", () => {
+      const { content } = parseCell("StudentT(3)");
+      expect(content).toEqual({
+        kind: "distribution",
+        dist: { type: "StudentT", nu: 3, mu: 0, sigma: 1 },
+      });
+    });
+
+    it("parses StudentT with 3 args", () => {
+      const { content } = parseCell("StudentT(4, 100, 15)");
+      expect(content).toEqual({
+        kind: "distribution",
+        dist: { type: "StudentT", nu: 4, mu: 100, sigma: 15 },
+      });
+    });
+
+    it("rejects StudentT with 2 args", () => {
+      expect(parseCell("StudentT(3, 5)").content.kind).toBe("text");
+    });
+
     it("rejects unknown distribution names", () => {
-      expect(parseCell("Poisson(5)").content.kind).toBe("text");
+      expect(parseCell("Gaussian(5, 1)").content.kind).toBe("text");
     });
   });
 

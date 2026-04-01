@@ -119,6 +119,72 @@
         "A14": "Total repair cost",
         "B14": ":= B12 * units"
       }
+    },
+    {
+      "name": "Pareto",
+      "cells": {
+        "A1": "Pareto distributions (heavy-tailed power law)",
+        "A2": "Models income, city sizes, file sizes — 'the 80/20 rule'.",
+        "A4": "Classic 80/20 (1, 1.16)",
+        "B4": ":= Pareto(1, 1.16)",
+        "A5": "Thinner tail (1, 3)",
+        "B5": ":= Pareto(1, 3)",
+        "A6": "Very thin tail (1, 10)",
+        "B6": ":= Pareto(1, 10)",
+        "A7": "Shifted scale (100, 2)",
+        "B7": ":= Pareto(100, 2)",
+        "A9": "Insurance claims",
+        "A10": "Claim size",
+        "B10": "claim = Pareto(1000, 2.5)",
+        "A11": "Num claims",
+        "B11": "nClaims = 50",
+        "A12": "Total exposure",
+        "B12": ":= claim * nClaims"
+      }
+    },
+    {
+      "name": "Poisson",
+      "cells": {
+        "A1": "Poisson distributions (event counts)",
+        "A2": "Models number of events in a fixed interval.",
+        "A4": "Rare events (λ=1)",
+        "B4": ":= Poisson(1)",
+        "A5": "Moderate (λ=5)",
+        "B5": ":= Poisson(5)",
+        "A6": "Frequent (λ=20)",
+        "B6": ":= Poisson(20)",
+        "A7": "Very frequent (λ=100)",
+        "B7": ":= Poisson(100)",
+        "A9": "Support tickets per day",
+        "A10": "Tickets/day",
+        "B10": "tickets = Poisson(12)",
+        "A11": "Cost per ticket",
+        "B11": "costPer = LogNormal(3.5, 0.5)",
+        "A12": "Daily support cost",
+        "B12": ":= tickets * costPer"
+      }
+    },
+    {
+      "name": "Student's t",
+      "cells": {
+        "A1": "Student's t distributions",
+        "A2": "Like Normal but with heavier tails. Low df = very heavy tails.",
+        "A4": "Very heavy (df=1, Cauchy)",
+        "B4": ":= StudentT(1)",
+        "A5": "Heavy (df=3)",
+        "B5": ":= StudentT(3)",
+        "A6": "Moderate (df=10)",
+        "B6": ":= StudentT(10)",
+        "A7": "Near-normal (df=30)",
+        "B7": ":= StudentT(30)",
+        "A9": "Location-scale form",
+        "A10": "Asset return",
+        "B10": "ret = StudentT(4, 0.08, 0.15)",
+        "A11": "Investment",
+        "B11": "invest = 100000",
+        "A12": "Portfolio value",
+        "B12": ":= invest * (1 + ret)"
+      }
     }
   ]
 }

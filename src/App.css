@@ -1033,6 +1033,7 @@ thead .row-header {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  cursor: grab;
 }
 
 .detail-header {

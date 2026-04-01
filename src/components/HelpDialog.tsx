@@ -50,6 +50,10 @@ const PAGES = [
               <tr><td><code>Uniform(low, high)</code></td><td>Uniform</td></tr>
               <tr><td><code>Triangular(low, mode, high)</code></td><td>Triangular</td></tr>
               <tr><td><code>Beta(alpha, beta)</code></td><td>Beta on [0, 1]</td></tr>
+              <tr><td><code>Pareto(xMin, alpha)</code></td><td>Heavy-tailed power law</td></tr>
+              <tr><td><code>Poisson(lambda)</code></td><td>Count of events per interval</td></tr>
+              <tr><td><code>StudentT(nu)</code></td><td>Heavy-tailed symmetric</td></tr>
+              <tr><td><code>StudentT(nu, mu, sigma)</code></td><td>Location-scale Student&apos;s t</td></tr>
             </tbody>
           </table>
           <p className="help-note">Distributions can also be used in formulas: <code>= Normal(100, 10) * 12</code></p>

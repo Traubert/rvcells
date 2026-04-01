@@ -8,7 +8,7 @@ A spreadsheet where **random variables are a first-class cell type**. Define unc
 
 ## What it does
 
-- **Distributions as values.** Type `Normal(100000, 15000)` into a cell and it becomes a random variable — 10,000 samples drawn from that distribution. Also supports `LogNormal`, `Uniform`, `Triangular`, and `Beta`.
+- **Distributions as values.** Type `Normal(100000, 15000)` into a cell and it becomes a random variable — 10,000 samples drawn from that distribution. Also supports `LogNormal`, `Uniform`, `Triangular`, `Beta`, `Pareto`, `Poisson`, and `StudentT`.
 - **Arithmetic on distributions.** Formulas like `= A1 + B1` work elementwise across samples. If any input is a distribution, the output is a distribution. Scalars stay scalar until mixed with a distribution — no wasted memory.
 - **Named variables.** Type `income = Normal(8000, 1000)` to define a variable. Other cells can reference it by name: `= income * 12`.
 - **Incremental recalculation.** Editing a cell only recomputes that cell and its downstream dependents, not the whole sheet.
@@ -25,7 +25,7 @@ A spreadsheet where **random variables are a first-class cell type**. Define unc
 
 - **TypeScript + React + Vite** — pure client-side, no backend
 - **Monte Carlo engine** — `Float64Array` sample vectors propagated through a dependency DAG in topological order
-- **Distribution sampling** — Box-Muller for normals, Marsaglia-Tsang for gamma/beta, inverse CDF for triangular/uniform
+- **Distribution sampling** — Box-Muller for normals, Marsaglia-Tsang for gamma/beta/Student's t, inverse CDF for triangular/uniform/Pareto, Knuth + normal approximation for Poisson
 - **Formula parser** — hand-written recursive descent parser supporting arithmetic, cell references, variable references, and function calls
 - **Visualization** — SVG histograms rendered directly in React
 

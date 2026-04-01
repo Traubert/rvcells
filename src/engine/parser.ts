@@ -130,6 +130,16 @@ function parseDistribution(s: string): Distribution | null {
     case "Beta":
       if (args.length === 2) return { type: "Beta", alpha: args[0], beta: args[1] };
       break;
+    case "Pareto":
+      if (args.length === 2) return { type: "Pareto", xMin: args[0], alpha: args[1] };
+      break;
+    case "Poisson":
+      if (args.length === 1) return { type: "Poisson", lambda: args[0] };
+      break;
+    case "StudentT":
+      if (args.length === 1) return { type: "StudentT", nu: args[0], mu: 0, sigma: 1 };
+      if (args.length === 3) return { type: "StudentT", nu: args[0], mu: args[1], sigma: args[2] };
+      break;
   }
 
   return null;

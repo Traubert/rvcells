@@ -543,6 +543,70 @@ describe("bernoulli and discrete", () => {
   });
 });
 
+describe("pareto, poisson, studentt", () => {
+  it("pareto produces samples >= xMin with correct mean", () => {
+    const sheet = makeSheet({ A1: "= Pareto(1, 3)" }, 10000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    // E[X] = alpha * xMin / (alpha - 1) = 3 * 1 / 2 = 1.5
+    expect(mean(sheet, "A1")).toBeCloseTo(1.5, 0);
+    // All samples >= xMin
+    const vals = (sheet.cells.get("A1")!.result as any).values as Float64Array;
+    for (let i = 0; i < vals.length; i++) expect(vals[i]).toBeGreaterThanOrEqual(1);
+  });
+
+  it("pareto as cell-level distribution", () => {
+    const sheet = makeSheet({ A1: "Pareto(2, 4)" }, 5000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    // E[X] = 4 * 2 / 3 ≈ 2.667
+    expect(mean(sheet, "A1")).toBeCloseTo(2.667, 0);
+  });
+
+  it("poisson produces non-negative integers with correct mean", () => {
+    const sheet = makeSheet({ A1: "= Poisson(7)" }, 10000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    expect(mean(sheet, "A1")).toBeCloseTo(7, 0);
+    const vals = (sheet.cells.get("A1")!.result as any).values as Float64Array;
+    for (let i = 0; i < vals.length; i++) {
+      expect(vals[i]).toBeGreaterThanOrEqual(0);
+      expect(vals[i] % 1).toBe(0); // integer
+    }
+  });
+
+  it("poisson large lambda uses normal approximation", () => {
+    const sheet = makeSheet({ A1: "= Poisson(50)" }, 10000);
+    expect(mean(sheet, "A1")).toBeCloseTo(50, 0);
+  });
+
+  it("poisson as cell-level distribution", () => {
+    const sheet = makeSheet({ A1: "Poisson(3)" }, 5000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    expect(mean(sheet, "A1")).toBeCloseTo(3, 0);
+  });
+
+  it("studentt with 1 arg has mean ~0", () => {
+    const sheet = makeSheet({ A1: "= StudentT(10)" }, 10000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    expect(mean(sheet, "A1")).toBeCloseTo(0, 0);
+  });
+
+  it("studentt with location-scale", () => {
+    const sheet = makeSheet({ A1: "= StudentT(10, 100, 15)" }, 10000);
+    expect(mean(sheet, "A1")).toBeCloseTo(100, 0);
+    expect(std(sheet, "A1")).toBeGreaterThan(10);
+  });
+
+  it("studentt as cell-level distribution", () => {
+    const sheet = makeSheet({ A1: "StudentT(5)" }, 5000);
+    expect(sheet.cells.get("A1")?.result?.kind).toBe("samples");
+    expect(mean(sheet, "A1")).toBeCloseTo(0, 0);
+  });
+
+  it("studentt cell-level with 3 args", () => {
+    const sheet = makeSheet({ A1: "StudentT(4, 50, 10)" }, 5000);
+    expect(mean(sheet, "A1")).toBeCloseTo(50, 0);
+  });
+});
+
 describe("resample", () => {
   it("resample produces samples with same distribution but different draws", () => {
     const sheet = makeSheet({

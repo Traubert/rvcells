@@ -683,6 +683,40 @@ function evalFunc(
         alphaR.value / (alphaR.value + betaR.value));
     }
 
+    case "pareto": {
+      if (args.length !== 2) throw new Error("Pareto(xMin, alpha) takes 2 arguments");
+      const [xMinR, alphaR] = args;
+      if (xMinR.kind !== "scalar" || alphaR.kind !== "scalar")
+        throw new Error("Pareto() parameters must be scalars");
+      const xMin = xMinR.value, alpha = alphaR.value;
+      const ev = alpha > 1 ? alpha * xMin / (alpha - 1) : xMin;
+      return captureDist(`Pareto(${xMin}, ${alpha})`,
+        { kind: "samples", values: sample({ type: "Pareto", xMin, alpha }, n) }, ev);
+    }
+    case "poisson": {
+      if (args.length !== 1) throw new Error("Poisson(lambda) takes 1 argument");
+      const [lambdaR] = args;
+      if (lambdaR.kind !== "scalar") throw new Error("Poisson() parameter must be scalar");
+      const lambda = lambdaR.value;
+      return captureDist(`Poisson(${lambda})`,
+        { kind: "samples", values: sample({ type: "Poisson", lambda }, n) }, lambda);
+    }
+    case "studentt": {
+      if (args.length !== 1 && args.length !== 3)
+        throw new Error("StudentT(nu) or StudentT(nu, mu, sigma) takes 1 or 3 arguments");
+      const [nuR, muR, sigmaR] = args;
+      if (nuR.kind !== "scalar") throw new Error("StudentT() parameters must be scalars");
+      const nu = nuR.value;
+      const mu = muR?.kind === "scalar" ? muR.value : 0;
+      const sigma = sigmaR?.kind === "scalar" ? sigmaR.value : 1;
+      if (muR && muR.kind !== "scalar" || sigmaR && sigmaR.kind !== "scalar")
+        throw new Error("StudentT() parameters must be scalars");
+      const label = args.length === 1 ? `StudentT(${nu})` : `StudentT(${nu}, ${mu}, ${sigma})`;
+      const ev = nu > 1 ? mu : mu;
+      return captureDist(label,
+        { kind: "samples", values: sample({ type: "StudentT", nu, mu, sigma }, n) }, ev);
+    }
+
     // Bernoulli distribution — samples 0/1
     case "bernoulli": {
       if (args.length !== 1) throw new Error("bernoulli(p) takes 1 argument");
@@ -1853,12 +1887,12 @@ export function histogram(
     min = fixedMin;
     max = fixedMax;
   } else {
-    min = Infinity;
-    max = -Infinity;
-    for (let i = 0; i < vals.length; i++) {
-      if (vals[i] < min) min = vals[i];
-      if (vals[i] > max) max = vals[i];
-    }
+    // Use P1-P99 to avoid extreme outliers dominating the range
+    const sorted = Float64Array.from(vals).sort();
+    const p01Idx = Math.floor(0.01 * (sorted.length - 1));
+    const p99Idx = Math.ceil(0.99 * (sorted.length - 1));
+    min = sorted[p01Idx];
+    max = sorted[p99Idx];
   }
 
   if (min === max) {
@@ -1868,13 +1902,18 @@ export function histogram(
   }
 
   const binWidth = (max - min) / numBins;
+  // Snap bin edges to a stable grid so panning doesn't shuffle samples between bins.
+  // Align min down and max up to the nearest multiple of binWidth.
+  const snappedMin = Math.floor(min / binWidth) * binWidth;
+  const snappedMax = snappedMin + numBins * binWidth;
+
   const bins = new Array(numBins).fill(0);
   for (let i = 0; i < vals.length; i++) {
-    if (vals[i] < min || vals[i] > max) continue; // skip out-of-range samples
-    let bin = Math.floor((vals[i] - min) / binWidth);
+    if (vals[i] < snappedMin || vals[i] > snappedMax) continue;
+    let bin = Math.floor((vals[i] - snappedMin) / binWidth);
     if (bin >= numBins) bin = numBins - 1;
     bins[bin]++;
   }
 
-  return { min, max, bins, binWidth };
+  return { min: snappedMin, max: snappedMax, bins, binWidth };
 }

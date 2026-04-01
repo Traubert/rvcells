@@ -17,6 +17,8 @@ export const changelog: ChangelogEntry[] = [
   { version: 6, summary: "Range fill with drag handle and $ pinning" },
   { version: 7, summary: "Save/load to browser storage, zip mass export/import" },
   { version: 8, summary: "Built-in example workbooks (Help \u2192 Examples)" },
+  { version: 9, summary: "Pareto, Poisson, and Student\u2019s t distributions" },
+  { version: 10, summary: "Histogram: P1\u2013P99 default range, stable bins, drag-to-pan" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;
