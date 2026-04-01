@@ -136,9 +136,11 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     [compareResult, lockedRange, autoHist, binCount]
   );
 
-  // Floor prevents sparse bins from spiking to full height when panning into tails.
-  // With viewBox height 100, maxBin >= 20 means each sample ≤ 5% of chart height.
-  const maxBin = Math.max(20, ...hist.bins, ...(compareHist?.bins ?? []));
+  // Floor prevents sparse bins from spiking to full height when panning into tails,
+  // but never exceeds total sample count so the tallest bin always fills the chart
+  // when it contains all the data (e.g. scalar results, constant Chain steps).
+  const nSamples = result.kind === "samples" ? result.values.length : 1;
+  const maxBin = Math.max(Math.min(20, nSamples), ...hist.bins, ...(compareHist?.bins ?? []));
   const [guideMode, setGuideMode] = useState<GuideMode>("none");
   const [rangeUnit, setRangeUnit] = useState<"value" | "sigma" | "percentile">("value");
 
