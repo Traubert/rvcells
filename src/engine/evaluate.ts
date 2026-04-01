@@ -2,7 +2,7 @@ import type { Cell, CellAddress, CellResult, Expr, Sheet } from "./types";
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
-import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, SAMPLE_CONSTRUCTORS } from "../constants";
+import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, SAMPLE_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
 import type { InlineSample } from "./types";
 
 /** Module-level capture for inline distribution samples during formula evaluation.
@@ -82,8 +82,8 @@ function exprDeps(expr: Expr): {
 
 /** Convert text to a valid variable name: lowercase, spaces/hyphens to underscores */
 function textToVarName(text: string): string | undefined {
-  const name = text.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-  if (!name || /^\d/.test(name)) return undefined;
+  const name = text.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^\p{L}\p{N}_]/gu, "");
+  if (!name || /^\p{N}/u.test(name)) return undefined;
   return name;
 }
 
@@ -1224,7 +1224,7 @@ export function resolveReference(
   const { allVarMaps } = buildAllVarMaps(allSheets);
 
   // Cross-sheet reference: Sheet.ref or 'Sheet'.ref
-  const dotMatch = trimmed.match(/^(?:'([^']+)'|([a-zA-Z_]\w*))\.(.+)$/);
+  const dotMatch = trimmed.match(new RegExp(`^(?:'([^']+)'|(${ID_START_SRC}${ID_CONT_SRC}*))\\.(.+)$`, "u"));
   if (dotMatch) {
     const sheetName = dotMatch[1] ?? dotMatch[2];
     const rest = dotMatch[3];
@@ -1307,7 +1307,7 @@ export function renameSheet(
 
   // Build regex patterns for old name references in raw cell text
   // Handle both unquoted (OldName.ref) and quoted ('Old Name'.ref) forms
-  const needsQuotes = (name: string) => /[^a-zA-Z0-9_]/.test(name);
+  const needsQuotes = (name: string) => /[^\p{L}\p{N}_]/u.test(name);
   const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   // Build replacement patterns
@@ -1316,7 +1316,7 @@ export function renameSheet(
   // Unquoted old name
   if (!needsQuotes(oldName)) {
     patterns.push({
-      regex: new RegExp(`(?<![a-zA-Z0-9_'])${escapeRegex(oldName)}\\.`, "gi"),
+      regex: new RegExp(`(?<!${ID_CONT_SRC}|')${escapeRegex(oldName)}\\.`, "giu"),
       replacement: needsQuotes(newName) ? `'${newName}'.` : `${newName}.`,
     });
   }

@@ -7,6 +7,13 @@ export const MAX_NUM_SAMPLES = 1_000_000;
 
 export const DEFAULT_NUM_HISTOGRAM_BINS = 100;
 
+/** Unicode-aware identifier character classes (letter/digit/underscore). */
+export const ID_START = /[\p{L}_]/u;
+export const ID_CONT = /[\p{L}\p{N}_]/u;
+/** Source strings for embedding in larger regexes. */
+export const ID_START_SRC = "[\\p{L}_]";
+export const ID_CONT_SRC = "[\\p{L}\\p{N}_]";
+
 /** Distribution names that can be entered directly into a cell without "=" (original casing). */
 export const DISTRIBUTION_NAMES = new Set(["Normal", "LogNormal", "Uniform", "Triangular", "Beta", "Pareto", "Poisson", "StudentT"]);
 

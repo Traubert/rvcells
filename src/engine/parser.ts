@@ -1,5 +1,5 @@
 import type { CellContent, Distribution, Expr } from "./types";
-import { DISTRIBUTION_NAMES } from "../constants";
+import { DISTRIBUTION_NAMES, ID_START, ID_CONT, ID_START_SRC, ID_CONT_SRC } from "../constants";
 
 /**
  * Parse raw cell input into structured CellContent.
@@ -10,6 +10,7 @@ import { DISTRIBUTION_NAMES } from "../constants";
  *   "Normal(100, 10)"         → distribution
  *   "= A1 + B2"              → formula
  *   "income = A1 * 12"       → formula with variable name
+ *   "income := A1 * 12"      → same (`:=` also accepted for explicit assignment)
  *   ":= A1 + B2"             → formula, variable name from left neighbour cell
  *   anything else             → text
  *
@@ -23,9 +24,9 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
     return { content: { kind: "empty" } };
   }
 
-  // Check for variable assignment: "name = ..."
+  // Check for variable assignment: "name = ..." or "name := ..."
   // But NOT "= ..." (that's a formula without a variable name)
-  const varMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$/);
+  const varMatch = trimmed.match(new RegExp(`^(${ID_START_SRC}${ID_CONT_SRC}*)\\s*:?=\\s*(.+)$`, "u"));
   if (varMatch) {
     const varName = varMatch[1].toLowerCase();
     const rhs = varMatch[2].trim();
@@ -194,7 +195,7 @@ function tokenize(input: string): Token[] {
 
     // Cell reference with optional $ pins, or identifier
     // Matches: $A$1, $A1, A$1, A1, or plain identifiers
-    if (input[i] === "$" || /[a-zA-Z_]/.test(input[i])) {
+    if (input[i] === "$" || ID_START.test(input[i])) {
       // Try to parse as a cell reference: optional $ + uppercase letters + optional $ + digits
       const cellRefMatch = input.slice(i).match(/^(\$?)([A-Z]+)(\$?)(\d+)/);
       if (cellRefMatch) {
@@ -205,7 +206,7 @@ function tokenize(input: string): Token[] {
         // Make sure the next char isn't a letter/digit/underscore (would mean it's an identifier)
         const matchLen = cellRefMatch[0].length;
         const nextChar = input[i + matchLen];
-        if (!nextChar || !/[a-zA-Z0-9_]/.test(nextChar)) {
+        if (!nextChar || !ID_CONT.test(nextChar)) {
           let col = 0;
           for (const ch of colStr) {
             col = col * 26 + (ch.charCodeAt(0) - 64);
@@ -219,9 +220,9 @@ function tokenize(input: string): Token[] {
       }
 
       // Not a cell reference — parse as identifier (but not starting with $)
-      if (/[a-zA-Z_]/.test(input[i])) {
+      if (ID_START.test(input[i])) {
         let word = "";
-        while (i < input.length && /[a-zA-Z0-9_]/.test(input[i])) {
+        while (i < input.length && ID_CONT.test(input[i])) {
           word += input[i++];
         }
         tokens.push({ type: "ident", name: word.toLowerCase(), original: word });

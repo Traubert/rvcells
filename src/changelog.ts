@@ -19,6 +19,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 8, summary: "Built-in example workbooks (Help \u2192 Examples)" },
   { version: 9, summary: "Pareto, Poisson, and Student\u2019s t distributions" },
   { version: 10, summary: "Histogram: P1\u2013P99 default range, stable bins, drag-to-pan" },
+  { version: 11, summary: "Variable assignment with := syntax, unicode variable names" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

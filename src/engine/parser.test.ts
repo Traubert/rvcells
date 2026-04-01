@@ -165,6 +165,43 @@ describe("parseCell", () => {
       expect(result.variableName).toBeUndefined();
       expect(result.content.kind).toBe("formula");
     });
+
+    it("parses variable assignment with :=", () => {
+      const result = parseCell("subtotal := D3 + D4");
+      expect(result.variableName).toBe("subtotal");
+      expect(result.content.kind).toBe("formula");
+      expect(result.labelVar).toBeUndefined();
+    });
+
+    it("parses variable with := and distribution", () => {
+      const result = parseCell("income := Normal(5000, 500)");
+      expect(result.variableName).toBe("income");
+      expect(result.content.kind).toBe("distribution");
+    });
+
+    it("parses variable with := and number", () => {
+      const result = parseCell("rate := 0.05");
+      expect(result.variableName).toBe("rate");
+      expect(result.content).toEqual({ kind: "number", value: 0.05 });
+    });
+
+    it("allows unicode letters in variable names", () => {
+      const result = parseCell("inkomst = Normal(5000, 500)");
+      expect(result.variableName).toBe("inkomst");
+      expect(result.content.kind).toBe("distribution");
+    });
+
+    it("allows unicode letters with diacritics", () => {
+      const result = parseCell("årlig_inkomst = 12000");
+      expect(result.variableName).toBe("årlig_inkomst");
+      expect(result.content).toEqual({ kind: "number", value: 12000 });
+    });
+
+    it("allows CJK variable names", () => {
+      const result = parseCell("収入 = A1 + B1");
+      expect(result.variableName).toBe("収入");
+      expect(result.content.kind).toBe("formula");
+    });
   });
 
   describe("label-variable (:=) syntax", () => {

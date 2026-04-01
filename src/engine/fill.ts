@@ -1,4 +1,5 @@
 import { toAddress } from "./types";
+import { ID_START_SRC, ID_CONT_SRC } from "../constants";
 
 /**
  * Shift cell references in a raw cell string by (dCol, dRow).
@@ -26,7 +27,7 @@ export function shiftCellText(raw: string, dCol: number, dRow: number): string {
     expr = trimmed.slice(1);
   } else {
     // Check for "name = ..." pattern
-    const varMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*\s*=\s*)/);
+    const varMatch = trimmed.match(new RegExp(`^(${ID_START_SRC}${ID_CONT_SRC}*\\s*:?=\\s*)`, "u"));
     if (varMatch) {
       prefix = varMatch[1];
       expr = trimmed.slice(prefix.length);
