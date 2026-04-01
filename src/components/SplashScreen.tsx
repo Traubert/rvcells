@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { examples } from "../examples";
 import type { FileFormat } from "../engine/file";
 import type { ChangelogEntry } from "../changelog";
+import faviconUrl from "/favicon.svg";
 
 interface SplashScreenProps {
   mode: "welcome" | "whats-new";
@@ -25,7 +26,7 @@ export function SplashScreen({ mode, newEntries, onDismiss, onLoadExample }: Spl
         {mode === "welcome" ? (
           <>
             <div className="splash-hero">
-              <img src="/favicon.svg" className="splash-logo" alt="" />
+              <img src={faviconUrl} className="splash-logo" alt="" />
               <h2 className="splash-title">Welcome to <span className="splash-brand">rvcells</span></h2>
             </div>
             <p className="splash-text">
@@ -62,7 +63,7 @@ export function SplashScreen({ mode, newEntries, onDismiss, onLoadExample }: Spl
         ) : (
           <>
             <div className="splash-hero">
-              <img src="/favicon.svg" className="splash-logo" alt="" />
+              <img src={faviconUrl} className="splash-logo" alt="" />
               <h2 className="splash-title">Welcome back</h2>
             </div>
             <p className="splash-text">Here's what's new since your last visit:</p>
