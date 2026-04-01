@@ -1,0 +1,44 @@
+export interface ChangelogEntry {
+  version: number;
+  summary: string;
+}
+
+/**
+ * Append new entries at the end. The version number is just an incrementing
+ * integer — bump it each time you add an entry. The splash screen shows all
+ * entries newer than the visitor's last-seen version.
+ */
+export const changelog: ChangelogEntry[] = [
+  { version: 1, summary: "Tabbed multi-sheet workbooks with cross-sheet references" },
+  { version: 2, summary: "Chain() and ChainIndex() for iterative Monte Carlo processes" },
+  { version: 3, summary: "Timeline fan chart for Chain cells" },
+  { version: 4, summary: "Sensitivity analysis: Correlation, Variance, and Tornado tabs" },
+  { version: 5, summary: "Distribution comparison overlay in the detail panel" },
+  { version: 6, summary: "Range fill with drag handle and $ pinning" },
+  { version: 7, summary: "Save/load to browser storage, zip mass export/import" },
+  { version: 8, summary: "Built-in example workbooks (Help \u2192 Examples)" },
+];
+
+export const CURRENT_VERSION = changelog[changelog.length - 1].version;
+
+const STORAGE_KEY = "rvcells:lastSeenVersion";
+
+/** Returns null for first-time visitors, or the last-seen version number. */
+export function getLastSeenVersion(): number | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return null;
+    const v = parseInt(raw, 10);
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setLastSeenVersion(version: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(version));
+  } catch {
+    // storage full or unavailable — silently ignore
+  }
+}

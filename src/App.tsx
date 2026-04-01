@@ -9,8 +9,11 @@ import { storageAvailable, saveWorkbook, loadWorkbook, listWorkbooks, generateId
 import type { WorkbookEntry } from "./engine/storage";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { HelpDialog } from "./components/HelpDialog";
+import { SplashScreen } from "./components/SplashScreen";
 import type { Sheet } from "./engine/types";
 import type { FileFormat } from "./engine/file";
+import { changelog, CURRENT_VERSION, getLastSeenVersion, setLastSeenVersion } from "./changelog";
+import type { ChangelogEntry } from "./changelog";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "./constants";
 import "./App.css";
 
@@ -42,6 +45,12 @@ export default function App() {
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const [splash, setSplash] = useState<{ mode: "welcome" | "whats-new"; newEntries: ChangelogEntry[] } | null>(() => {
+    const last = getLastSeenVersion();
+    if (last === null) return { mode: "welcome", newEntries: [] };
+    if (last < CURRENT_VERSION) return { mode: "whats-new", newEntries: changelog.filter((e) => e.version > last) };
+    return null;
+  });
 
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
@@ -181,6 +190,11 @@ export default function App() {
     setActiveIndex(0);
     bump();
   }, [bump]);
+
+  const handleDismissSplash = useCallback(() => {
+    setLastSeenVersion(CURRENT_VERSION);
+    setSplash(null);
+  }, []);
 
   // Mass export all saved workbooks as zip
   const handleMassExport = useCallback(async () => {
@@ -377,6 +391,14 @@ export default function App() {
             setConfirmDelete(null);
           }}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+      {splash && (
+        <SplashScreen
+          mode={splash.mode}
+          newEntries={splash.newEntries}
+          onDismiss={handleDismissSplash}
+          onLoadExample={handleLoadExample}
         />
       )}
     </div>

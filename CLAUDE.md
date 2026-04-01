@@ -96,7 +96,6 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Inline distribution sample capture for sensitivity analysis of formulas with embedded distributions (including Chain body)
 - [x] Deterministic mode for tornado evaluation (distribution constructors return expected values)
 - [x] Percentile display (P5, P25, P50, P75, P95) in the detail panel
-- [ ] Conditional formatting / heatmap coloring based on variance or spread
 
 ### P2 — usability
 - [x] Import/export spreadsheet as JSON file (browser download/upload)
