@@ -273,6 +273,7 @@
 
 .open-footer {
   margin-top: 8px;
+  margin-bottom: 12px;
 }
 
 .dialog-button-danger {
@@ -392,13 +393,17 @@
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+  cursor: default;
+  user-select: none;
 }
 
 .file-name:hover {
   border-color: var(--border);
 }
 
-.file-name:focus {
+.file-name-editing {
+  cursor: text;
+  user-select: auto;
   outline: none;
   border-color: var(--accent);
   background: rgba(0, 0, 0, 0.2);

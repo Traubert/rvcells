@@ -38,6 +38,9 @@ export default function App() {
   const [saveFlash, setSaveFlash] = useState(false);
   const [renameNotice, setRenameNotice] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
@@ -48,6 +51,23 @@ export default function App() {
       setStorageWarning(check.reason!);
     }
   }, []);
+
+  // Focus and select workbook name input when entering edit mode
+  useEffect(() => {
+    if (editingName) {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    }
+  }, [editingName]);
+
+  const commitNameEdit = useCallback(() => {
+    const trimmed = editNameValue.trim();
+    if (trimmed && trimmed !== nameRef.current) {
+      nameRef.current = trimmed;
+      bump();
+    }
+    setEditingName(false);
+  }, [editNameValue, bump]);
 
   const activeSheet = sheetsRef.current[activeIndex];
 
@@ -181,10 +201,6 @@ export default function App() {
     input.click();
   }, [showRenameNotice]);
 
-  const handleNameChange = useCallback((name: string) => {
-    nameRef.current = name;
-    bump();
-  }, [bump]);
 
   const handleSettingsSave = useCallback((settings: { numSamples: number }) => {
     for (const sheet of sheetsRef.current) {
@@ -268,13 +284,30 @@ export default function App() {
             </div>
           )}
         </div>
-        <input
-          className="file-name"
-          value={nameRef.current}
-          onChange={(e) => handleNameChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          spellCheck={false}
-        />
+        {editingName ? (
+          <input
+            ref={nameInputRef}
+            className="file-name file-name-editing"
+            value={editNameValue}
+            onChange={(e) => setEditNameValue(e.target.value)}
+            onBlur={commitNameEdit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitNameEdit();
+              if (e.key === "Escape") setEditingName(false);
+            }}
+            spellCheck={false}
+          />
+        ) : (
+          <span
+            className="file-name"
+            onDoubleClick={() => {
+              setEditNameValue(nameRef.current);
+              setEditingName(true);
+            }}
+          >
+            {nameRef.current}
+          </span>
+        )}
         {saveFlash && <span className="save-flash">Saved</span>}
         {renameNotice && <span className="rename-notice">{renameNotice}</span>}
       </header>

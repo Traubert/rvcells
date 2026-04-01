@@ -37,7 +37,7 @@ export function OpenDialog({ workbooks, currentId, onOpen, onClose, onRefresh }:
         <h2>Open from browser storage</h2>
 
         {filtered.length === 0 ? (
-          <p className="open-empty">No other saved workbooks. Use <strong>Save</strong> (Ctrl+S) to save the current workbook.</p>
+          <p className="open-empty">{workbooks.length === 0 ? "No saved workbooks." : "No other saved workbooks."} Use <strong>Save</strong> (Ctrl+S) to save the current workbook.</p>
         ) : (
           <div className="open-list">
             {filtered.map((wb) => (

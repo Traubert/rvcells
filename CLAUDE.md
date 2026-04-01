@@ -119,7 +119,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 
 ### Additional TODOs
 - [ ] Consider: Pareto distribution, Poisson distribution, logistic distribution, log-logistic distribution
-- [ ] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
+- [x] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
 
 ## Design Principles
 
