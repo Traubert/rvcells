@@ -143,9 +143,11 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   const maxBin = Math.max(Math.min(20, nSamples), ...hist.bins, ...(compareHist?.bins ?? []));
   const [guideMode, setGuideMode] = useState<GuideMode>("none");
   const [rangeUnit, setRangeUnit] = useState<"value" | "sigma" | "percentile">("value");
+  const [rangeMinDraft, setRangeMinDraft] = useState<string | null>(null);
+  const [rangeMaxDraft, setRangeMaxDraft] = useState<string | null>(null);
 
   const fewerBins = useCallback((step: number) => setBinCount(c => Math.max(5, c - step)), []);
-  const moreBins = useCallback((step: number) => setBinCount(c => Math.min(250, c + step)), []);
+  const moreBins = useCallback((step: number) => setBinCount(c => Math.min(300, c + step)), []);
   const fewerBinsRepeat = useRepeatAction(fewerBins);
   const moreBinsRepeat = useRepeatAction(moreBins);
 
@@ -520,33 +522,45 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
                   });
                   onReturnFocus();
                 }
-                const displayMin = roundDisplay(toDisplayUnit(lockedRange.min));
-                const displayMax = roundDisplay(toDisplayUnit(lockedRange.max));
+                const displayMin = String(roundDisplay(toDisplayUnit(lockedRange.min)));
+                const displayMax = String(roundDisplay(toDisplayUnit(lockedRange.max)));
                 const displayStep = rangeUnit === "sigma" ? 0.5
                   : rangeUnit === "percentile" ? 5
                   : rangeStep;
-                function handleDisplayInput(which: "min" | "max", value: string) {
+                function commitRange(which: "min" | "max", value: string) {
                   const num = Number(value);
-                  if (isNaN(num) || !lockedRange) return;
-                  const natural = roundForDisplay(fromDisplayUnit(num));
-                  onLockRange({
-                    ...lockedRange,
-                    [which]: natural,
-                  });
+                  if (!isNaN(num) && lockedRange) {
+                    const natural = roundForDisplay(fromDisplayUnit(num));
+                    onLockRange({ ...lockedRange, [which]: natural });
+                  }
+                  if (which === "min") setRangeMinDraft(null);
+                  else setRangeMaxDraft(null);
                 }
-                function handleRangeBlur(e: React.FocusEvent) {
+                function stepRange(which: "min" | "max", direction: 1 | -1) {
+                  const current = roundDisplay(toDisplayUnit(lockedRange![which]));
+                  const stepped = current + direction * displayStep;
+                  const natural = roundForDisplay(fromDisplayUnit(stepped));
+                  onLockRange({ min: lockedRange!.min, max: lockedRange!.max, [which]: natural });
+                  if (which === "min") setRangeMinDraft(null);
+                  else setRangeMaxDraft(null);
+                }
+                function handleRangeBlur(which: "min" | "max", e: React.FocusEvent) {
+                  const draft = which === "min" ? rangeMinDraft : rangeMaxDraft;
+                  commitRange(which, draft ?? (which === "min" ? displayMin : displayMax));
                   const related = e.relatedTarget as HTMLElement | null;
                   if (related?.closest(".detail-controls")) return;
                   onReturnFocus();
                 }
-                function handleRangeKeyDown(e: React.KeyboardEvent) {
-                  if (e.key === "ArrowLeft" || e.key === "ArrowRight"
-                      || e.key === "Backspace" || e.key === "Delete"
-                      || e.key === "ArrowUp" || e.key === "ArrowDown"
-                      || e.key === "Tab") {
-                    e.stopPropagation();
+                function handleRangeKeyDown(which: "min" | "max", e: React.KeyboardEvent) {
+                  e.stopPropagation();
+                  if (e.key === "Enter") {
+                    const draft = which === "min" ? rangeMinDraft : rangeMaxDraft;
+                    commitRange(which, draft ?? (which === "min" ? displayMin : displayMax));
+                    onReturnFocus();
                   }
-                  if (e.key === "Enter" || e.key === "Escape") {
+                  if (e.key === "Escape") {
+                    if (which === "min") setRangeMinDraft(null);
+                    else setRangeMaxDraft(null);
                     onReturnFocus();
                   }
                 }
@@ -557,25 +571,35 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
                     <button className="zoom-button" onClick={() => zoomRange(1.5)} title="Expand range">−</button>
                   </span>
                   <button className="hist-guide-toggle" onClick={cycleRangeUnit}>{rangeUnitLabel}</button>
-                  <input
-                    type="number"
-                    className="range-input"
-                    value={displayMin}
-                    onChange={(e) => handleDisplayInput("min", e.target.value)}
-                    onBlur={handleRangeBlur}
-                    onKeyDown={handleRangeKeyDown}
-                    step={displayStep}
-                  />
+                  <span className="range-field">
+                    <input
+                      type="text"
+                      className="range-input"
+                      value={rangeMinDraft ?? displayMin}
+                      onChange={(e) => setRangeMinDraft(e.target.value)}
+                      onBlur={(e) => handleRangeBlur("min", e)}
+                      onKeyDown={(e) => handleRangeKeyDown("min", e)}
+                    />
+                    <span className="range-stepper">
+                      <button className="range-step-btn" onClick={() => stepRange("min", 1)} tabIndex={-1}>&#9650;</button>
+                      <button className="range-step-btn" onClick={() => stepRange("min", -1)} tabIndex={-1}>&#9660;</button>
+                    </span>
+                  </span>
                   <span className="range-separator">–</span>
-                  <input
-                    type="number"
-                    className="range-input"
-                    value={displayMax}
-                    onChange={(e) => handleDisplayInput("max", e.target.value)}
-                    onBlur={handleRangeBlur}
-                    onKeyDown={handleRangeKeyDown}
-                    step={displayStep}
-                  />
+                  <span className="range-field">
+                    <input
+                      type="text"
+                      className="range-input"
+                      value={rangeMaxDraft ?? displayMax}
+                      onChange={(e) => setRangeMaxDraft(e.target.value)}
+                      onBlur={(e) => handleRangeBlur("max", e)}
+                      onKeyDown={(e) => handleRangeKeyDown("max", e)}
+                    />
+                    <span className="range-stepper">
+                      <button className="range-step-btn" onClick={() => stepRange("max", 1)} tabIndex={-1}>&#9650;</button>
+                      <button className="range-step-btn" onClick={() => stepRange("max", -1)} tabIndex={-1}>&#9660;</button>
+                    </span>
+                  </span>
                 </div>
                 );
               })()}
@@ -954,7 +978,7 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
     [compareHist]
   );
 
-  const hoverInfo = hoverBin !== null ? {
+  const hoverInfo = hoverBin !== null && hist.bins[hoverBin] > 0 ? {
     lo: hist.min + hoverBin * hist.binWidth,
     hi: hist.min + (hoverBin + 1) * hist.binWidth,
     pct: totalSamples > 0 ? (hist.bins[hoverBin] / totalSamples) * 100 : 0,
@@ -1036,16 +1060,17 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
       </div>
       <div className="hist-axis">
         {range > 0 && (() => {
-          const ticks = niceGridLines(hist.min, hist.max, 6);
-          return <>
-            <span className="hist-tick" style={{ left: 0 }}>{formatNumber(hist.min)}</span>
-            {ticks.filter(v => v > hist.min && v < hist.max).map(v => (
-              <span key={v} className="hist-tick" style={{ left: `${((v - hist.min) / range) * 100}%` }}>
-                {formatNumber(v)}
-              </span>
-            ))}
-            <span className="hist-tick" style={{ right: 0 }}>{formatNumber(hist.max)}</span>
-          </>;
+          const tickCount = 10;
+          const ticks = Array.from({ length: tickCount + 1 }, (_, i) => {
+            const pct = (i / tickCount) * 100;
+            const value = hist.min + (i / tickCount) * range;
+            return { pct, value };
+          });
+          return ticks.map(({ pct, value }) => (
+            <span key={pct} className="hist-tick" style={{ left: `${pct}%` }}>
+              {formatNumber(value)}
+            </span>
+          ));
         })()}
         {hoverInfo && (
           <span className="hist-hover-info">
@@ -1077,6 +1102,8 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   const [stepsInput, setStepsInput] = useState("50");
   const [hoverPos, setHoverPos] = useState<{ xFrac: number; yFrac: number } | null>(null);
   const [lockedXRange, setLockedXRange] = useState<{ min: number; max: number } | null>(null);
+  const [xRangeMinDraft, setXRangeMinDraft] = useState<string | null>(null);
+  const [xRangeMaxDraft, setXRangeMaxDraft] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
 
   const timelineResult = useMemo(() => {
@@ -1219,18 +1246,12 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
       <div className="timeline-controls">
         <label>
           Steps: <input
-            type="number"
+            type="text"
             className="timeline-steps-input"
             value={stepsInput}
-            onChange={e => {
-              setStepsInput(e.target.value);
-              const n = parseInt(e.target.value, 10);
-              if (!isNaN(n) && n > 0) setNumSteps(n);
-            }}
+            onChange={e => setStepsInput(e.target.value)}
             onBlur={commitSteps}
             onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter") commitSteps(); }}
-            min={1}
-            max={10000}
           />
         </label>
         <span className="timeline-legend">
@@ -1341,12 +1362,74 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
               </button>
             )}
           </div>
-          {isXLocked && (
-            <span className="zoom-buttons">
-              <button className="zoom-button" onClick={() => applyXZoom(0.9)} title="Zoom in">+</button>
-              <button className="zoom-button" onClick={() => applyXZoom(1 / 0.9)} title="Zoom out">−</button>
-            </span>
-          )}
+          {isXLocked && (() => {
+            const xMinDisplay = String(Math.round(lockedXRange!.min));
+            const xMaxDisplay = String(Math.round(lockedXRange!.max));
+            function commitXRange(which: "min" | "max", value: string) {
+              const v = parseInt(value, 10);
+              if (!isNaN(v)) {
+                setLockedXRange(which === "min"
+                  ? { min: v, max: lockedXRange!.max }
+                  : { min: lockedXRange!.min, max: v });
+              }
+              if (which === "min") setXRangeMinDraft(null);
+              else setXRangeMaxDraft(null);
+            }
+            function stepXRange(which: "min" | "max", direction: 1 | -1) {
+              const current = which === "min" ? lockedXRange!.min : lockedXRange!.max;
+              const stepped = Math.round(current + direction);
+              setLockedXRange(which === "min"
+                ? { min: stepped, max: lockedXRange!.max }
+                : { min: lockedXRange!.min, max: stepped });
+              if (which === "min") setXRangeMinDraft(null);
+              else setXRangeMaxDraft(null);
+            }
+            return (
+            <div className="range-locked-controls">
+              <span className="zoom-buttons">
+                <button className="zoom-button" onClick={() => applyXZoom(0.9)} title="Zoom in">+</button>
+                <button className="zoom-button" onClick={() => applyXZoom(1 / 0.9)} title="Zoom out">−</button>
+              </span>
+              <span className="range-field">
+                <input
+                  type="text"
+                  className="range-input"
+                  value={xRangeMinDraft ?? xMinDisplay}
+                  onChange={(e) => setXRangeMinDraft(e.target.value)}
+                  onBlur={() => commitXRange("min", xRangeMinDraft ?? xMinDisplay)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") commitXRange("min", xRangeMinDraft ?? xMinDisplay);
+                    if (e.key === "Escape") setXRangeMinDraft(null);
+                  }}
+                />
+                <span className="range-stepper">
+                  <button className="range-step-btn" onClick={() => stepXRange("min", 1)} tabIndex={-1}>&#9650;</button>
+                  <button className="range-step-btn" onClick={() => stepXRange("min", -1)} tabIndex={-1}>&#9660;</button>
+                </span>
+              </span>
+              <span className="range-separator">–</span>
+              <span className="range-field">
+                <input
+                  type="text"
+                  className="range-input"
+                  value={xRangeMaxDraft ?? xMaxDisplay}
+                  onChange={(e) => setXRangeMaxDraft(e.target.value)}
+                  onBlur={() => commitXRange("max", xRangeMaxDraft ?? xMaxDisplay)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") commitXRange("max", xRangeMaxDraft ?? xMaxDisplay);
+                    if (e.key === "Escape") setXRangeMaxDraft(null);
+                  }}
+                />
+                <span className="range-stepper">
+                  <button className="range-step-btn" onClick={() => stepXRange("max", 1)} tabIndex={-1}>&#9650;</button>
+                  <button className="range-step-btn" onClick={() => stepXRange("max", -1)} tabIndex={-1}>&#9660;</button>
+                </span>
+              </span>
+            </div>
+            );
+          })()}
         </div>
       </div>
     </div>

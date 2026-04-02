@@ -1092,7 +1092,7 @@ thead .row-header {
 
 .hist-chart-area svg {
   width: 100%;
-  height: 180px;
+  height: 30vh;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
 }
@@ -1123,34 +1123,42 @@ thead .row-header {
 
 .hist-axis {
   position: relative;
-  height: 16px;
+  height: 22px;
   font-family: var(--font-ui);
   font-size: 9px;
   color: rgba(200, 200, 220, 0.6);
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .hist-tick {
   position: absolute;
   transform: translateX(-50%);
   white-space: nowrap;
+  top: 5px;
 }
 
-.hist-tick:first-child {
-  transform: none;
+.hist-tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  width: 1px;
+  height: 5px;
+  background: rgba(200, 200, 220, 0.4);
 }
 
-.hist-tick:last-of-type:not(:first-child) {
-  transform: none;
-}
 
 .hist-hover-info {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--text-dim);
+  font-size: 12px;
+  color: var(--text-bright);
   white-space: nowrap;
+  background: var(--bg);
+  padding: 1px 8px;
+  border-radius: 9px;
+  z-index: 1;
 }
 
 .hist-chart-area {
@@ -1305,6 +1313,42 @@ thead .row-header {
 
 .range-input:focus {
   outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.range-field {
+  display: inline-flex;
+  align-items: center;
+}
+
+.range-stepper {
+  display: inline-flex;
+  flex-direction: column;
+  margin-left: 1px;
+}
+
+.range-step-btn {
+  display: block;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 6px;
+  line-height: 1;
+  padding: 1px 3px;
+  cursor: pointer;
+}
+
+.range-step-btn:first-child {
+  border-radius: 2px 2px 0 0;
+  border-bottom: none;
+}
+
+.range-step-btn:last-child {
+  border-radius: 0 0 2px 2px;
+}
+
+.range-step-btn:hover {
+  color: var(--text-bright);
   border-color: var(--accent);
 }
 
@@ -1777,7 +1821,7 @@ thead .row-header {
 
 .timeline-chart {
   position: relative;
-  height: 150px;
+  height: 30vh;
   flex: 1;
   border-left: 1px solid rgba(200, 200, 220, 0.4);
   border-bottom: 1px solid rgba(200, 200, 220, 0.4);

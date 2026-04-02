@@ -401,6 +401,10 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
 
       if (editingAddr) return;
 
+      // Don't intercept keys when a detail-panel input/button is focused
+      const target = e.target as HTMLElement;
+      if (target.closest(".detail-panel") && (target.tagName === "INPUT" || target.tagName === "BUTTON" || target.tagName === "SELECT")) return;
+
       if (!selectedAddr) return;
 
       // Enter or F2: start editing existing content (single selection only)
