@@ -117,8 +117,10 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Shareable via URL (encode state in URL or use a paste service)
 
 ### Additional TODOs
+
 - [ ] Consider: logistic distribution, log-logistic distribution
 - [x] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
+- [ ] Highlight the row and column labels of the active cell
 
 ## Design Principles
 

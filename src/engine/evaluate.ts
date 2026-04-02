@@ -1353,14 +1353,21 @@ export function renameSheet(
 export function summarize(result: CellResult): {
   mean: number;
   std: number;
+  p1: number;
   p5: number;
+  p10: number;
   p25: number;
+  p40: number;
   p50: number;
+  p60: number;
   p75: number;
+  p90: number;
   p95: number;
+  p99: number;
 } {
   if (result.kind === "scalar") {
-    return { mean: result.value, std: 0, p5: result.value, p25: result.value, p50: result.value, p75: result.value, p95: result.value };
+    const v = result.value;
+    return { mean: v, std: 0, p1: v, p5: v, p10: v, p25: v, p40: v, p50: v, p60: v, p75: v, p90: v, p95: v, p99: v };
   }
 
   const vals = result.values;
@@ -1378,7 +1385,7 @@ export function summarize(result: CellResult): {
   const sorted = new Float64Array(vals).sort();
   const p = (frac: number) => sorted[Math.floor(frac * (n - 1))];
 
-  return { mean, std, p5: p(0.05), p25: p(0.25), p50: p(0.5), p75: p(0.75), p95: p(0.95) };
+  return { mean, std, p1: p(0.01), p5: p(0.05), p10: p(0.1), p25: p(0.25), p40: p(0.4), p50: p(0.5), p60: p(0.6), p75: p(0.75), p90: p(0.9), p95: p(0.95), p99: p(0.99) };
 }
 
 // ─── Sensitivity analysis ────────────────────────────────────────────
@@ -1800,7 +1807,7 @@ export function computeChainTimeline(
   numSteps: number,
   allSheets: Sheet[],
   sheetIndex: number,
-): { step: number; mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number }[] {
+): (ReturnType<typeof summarize> & { step: number })[] {
   if (!cell.chainBody || !cell.chainInitial) return [];
 
   const sheet = allSheets[sheetIndex];
@@ -1824,7 +1831,7 @@ export function computeChainTimeline(
   // Ensure steps are computed
   evaluateChainStep(cell, cellAddr, numSteps, allResults[sheetIndex], allVarMaps[sheetIndex], sheet.numSamples, sheet.cells, ctx);
 
-  const timeline: { step: number; mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number }[] = [];
+  const timeline: (ReturnType<typeof summarize> & { step: number })[] = [];
   for (let t = 0; t <= numSteps && t < (cell.chainCache?.length ?? 0); t++) {
     const stats = summarize({ kind: "samples", values: cell.chainCache![t] });
     timeline.push({ step: t, ...stats });

@@ -437,11 +437,15 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
             <tbody>
               <tr><td>Mean</td><td>{formatNumber(stats.mean)}</td></tr>
               <tr><td>Std Dev</td><td>{formatNumber(stats.std)}</td></tr>
+              <tr><td>P1</td><td>{formatNumber(stats.p1)}</td></tr>
               <tr><td>P5</td><td>{formatNumber(stats.p5)}</td></tr>
+              <tr><td>P10</td><td>{formatNumber(stats.p10)}</td></tr>
               <tr><td>P25</td><td>{formatNumber(stats.p25)}</td></tr>
               <tr><td>P50</td><td>{formatNumber(stats.p50)}</td></tr>
               <tr><td>P75</td><td>{formatNumber(stats.p75)}</td></tr>
+              <tr><td>P90</td><td>{formatNumber(stats.p90)}</td></tr>
               <tr><td>P95</td><td>{formatNumber(stats.p95)}</td></tr>
+              <tr><td>P99</td><td>{formatNumber(stats.p99)}</td></tr>
             </tbody>
           </table>
 
@@ -450,11 +454,15 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
               <tbody>
                 <tr><td>Mean</td><td>{formatNumber(compareStats.mean)}</td></tr>
                 <tr><td>Std Dev</td><td>{formatNumber(compareStats.std)}</td></tr>
+                <tr><td>P1</td><td>{formatNumber(compareStats.p1)}</td></tr>
                 <tr><td>P5</td><td>{formatNumber(compareStats.p5)}</td></tr>
+                <tr><td>P10</td><td>{formatNumber(compareStats.p10)}</td></tr>
                 <tr><td>P25</td><td>{formatNumber(compareStats.p25)}</td></tr>
                 <tr><td>P50</td><td>{formatNumber(compareStats.p50)}</td></tr>
                 <tr><td>P75</td><td>{formatNumber(compareStats.p75)}</td></tr>
+                <tr><td>P90</td><td>{formatNumber(compareStats.p90)}</td></tr>
                 <tr><td>P95</td><td>{formatNumber(compareStats.p95)}</td></tr>
+                <tr><td>P99</td><td>{formatNumber(compareStats.p99)}</td></tr>
               </tbody>
             </table>
           )}
@@ -1105,6 +1113,17 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   const [xRangeMinDraft, setXRangeMinDraft] = useState<string | null>(null);
   const [xRangeMaxDraft, setXRangeMaxDraft] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
+  const [chartSize, setChartSize] = useState<{ w: number; h: number }>({ w: 600, h: 200 });
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) setChartSize({ w: width, h: height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const timelineResult = useMemo(() => {
     try {
@@ -1166,6 +1185,47 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
     return () => el.removeEventListener("wheel", handleWheel);
   });
 
+  // Drag-to-pan on X axis
+  const panDragRef = useRef<{ startX: number; startMin: number; startMax: number } | null>(null);
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
+      const curMin = isXLocked ? lockedXRange!.min : 0;
+      const curMax = isXLocked ? lockedXRange!.max : numSteps;
+      panDragRef.current = { startX: e.clientX, startMin: curMin, startMax: curMax };
+      el!.style.cursor = "grabbing";
+      e.preventDefault();
+    }
+    function handleMouseMove(e: MouseEvent) {
+      if (!panDragRef.current) return;
+      const rect = el!.getBoundingClientRect();
+      const pxDelta = e.clientX - panDragRef.current.startX;
+      const rangeWidth = panDragRef.current.startMax - panDragRef.current.startMin;
+      const rangeDelta = -(pxDelta / rect.width) * rangeWidth;
+      let newMin = panDragRef.current.startMin + rangeDelta;
+      let newMax = panDragRef.current.startMax + rangeDelta;
+      if (newMin < 0) { newMax -= newMin; newMin = 0; }
+      if (newMax > numSteps) { newMin -= (newMax - numSteps); newMax = numSteps; }
+      newMin = Math.max(0, newMin);
+      setLockedXRange({ min: newMin, max: newMax });
+    }
+    function handleMouseUp() {
+      if (!panDragRef.current) return;
+      panDragRef.current = null;
+      el!.style.cursor = "";
+    }
+    el.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      el.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  });
+
   if (timelineResult.error) {
     return <div className="detail-body"><span className="compare-error">{timelineResult.error}</span></div>;
   }
@@ -1202,12 +1262,14 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   }
 
   const medianLine = svgLine(timeline, s => s.p50);
-  const outerBand = svgBand(timeline, s => s.p95, s => s.p5);
+  const outerBand = svgBand(timeline, s => s.p90, s => s.p10);
   const innerBand = svgBand(timeline, s => s.p75, s => s.p25);
+  const middleBand = svgBand(timeline, s => s.p60, s => s.p40);
 
   const cmpMedianLine = compareTimeline.length > 0 ? svgLine(compareTimeline, s => s.p50) : null;
-  const cmpOuterBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p95, s => s.p5) : null;
+  const cmpOuterBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p90, s => s.p10) : null;
   const cmpInnerBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p75, s => s.p25) : null;
+  const cmpMiddleBand = compareTimeline.length > 0 ? svgBand(compareTimeline, s => s.p60, s => s.p40) : null;
 
   // Hover: compute step and y value from visible range
   const hoverStep = hoverPos !== null ? Math.round(xViewMin + hoverPos.xFrac * xRange) : null;
@@ -1255,8 +1317,9 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
           />
         </label>
         <span className="timeline-legend">
-          <span className="timeline-legend-outer">P5–P95</span>
+          <span className="timeline-legend-outer">P10–P90</span>
           <span className="timeline-legend-inner">P25–P75</span>
+          <span className="timeline-legend-middle">P40–P60</span>
           <span className="timeline-legend-median">Median</span>
         </span>
         {hoveredStats && (
@@ -1288,6 +1351,30 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
               onMouseLeave={() => setHoverPos(null)}
             >
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="timeline-svg">
+                <defs>
+                  {(() => {
+                    // Convert pixel sizes to viewBox units, accounting for non-uniform scaling
+                    const pxToVbX = 100 / chartSize.w;
+                    const pxToVbY = 100 / chartSize.h;
+                    const stripePx = 5;
+                    const gapPx = 10;
+                    const periodX = (stripePx + gapPx) * pxToVbX;
+                    const stripeX = stripePx * pxToVbX;
+                    // Scale transform to make stripes uniform in pixel space
+                    const scaleY = pxToVbY / pxToVbX;
+                    return <>
+                      <pattern id="cmp-stripe-outer" patternUnits="userSpaceOnUse" width={periodX} height="100" patternTransform={`scale(1,${scaleY}) rotate(5)`}>
+                        <rect width={stripeX} height="200" fill="#9a7850" />
+                      </pattern>
+                      <pattern id="cmp-stripe-inner" patternUnits="userSpaceOnUse" width={periodX} height="100" patternTransform={`scale(1,${scaleY}) rotate(5)`}>
+                        <rect width={stripeX} height="200" fill="#b88830" />
+                      </pattern>
+                      <pattern id="cmp-stripe-middle" patternUnits="userSpaceOnUse" width={periodX} height="100" patternTransform={`scale(1,${scaleY}) rotate(5)`}>
+                        <rect width={stripeX} height="200" fill="#d89818" />
+                      </pattern>
+                    </>;
+                  })()}
+                </defs>
                 {/* Gridlines */}
                 {yGridLines.map(v => (
                   <line key={`y${v}`} x1="0" x2="100" y1={toYPct(v)} y2={toYPct(v)} className="timeline-gridline" />
@@ -1297,9 +1384,11 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
                 ))}
                 <polygon points={outerBand} className="timeline-band-outer" />
                 <polygon points={innerBand} className="timeline-band-inner" />
+                <polygon points={middleBand} className="timeline-band-middle" />
                 <polyline points={medianLine} className="timeline-median" />
                 {cmpOuterBand && <polygon points={cmpOuterBand} className="timeline-cmp-band-outer" />}
                 {cmpInnerBand && <polygon points={cmpInnerBand} className="timeline-cmp-band-inner" />}
+                {cmpMiddleBand && <polygon points={cmpMiddleBand} className="timeline-cmp-band-middle" />}
                 {cmpMedianLine && <polyline points={cmpMedianLine} className="timeline-cmp-median" />}
               </svg>
               {hoverPos !== null && (
@@ -1436,16 +1525,17 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   );
 }
 
-/** Interpolate a percentile string from known breakpoints (p5, p25, p50, p75, p95) */
+/** Interpolate a percentile string from known breakpoints */
 function interpolatePct(
   y: number,
-  stats: { p5: number; p25: number; p50: number; p75: number; p95: number },
+  stats: { p1: number; p5: number; p10: number; p25: number; p40: number; p50: number; p60: number; p75: number; p90: number; p95: number; p99: number },
 ): string {
   const pts: [number, number][] = [
-    [stats.p5, 5], [stats.p25, 25], [stats.p50, 50], [stats.p75, 75], [stats.p95, 95],
+    [stats.p1, 1], [stats.p5, 5], [stats.p10, 10], [stats.p25, 25], [stats.p40, 40],
+    [stats.p50, 50], [stats.p60, 60], [stats.p75, 75], [stats.p90, 90], [stats.p95, 95], [stats.p99, 99],
   ];
-  if (y <= pts[0][0]) return "≤P5";
-  if (y >= pts[4][0]) return "≥P95";
+  if (y <= pts[0][0]) return "≤P1";
+  if (y >= pts[pts.length - 1][0]) return "≥P99";
   for (let i = 0; i < pts.length - 1; i++) {
     const [v0, p0] = pts[i];
     const [v1, p1] = pts[i + 1];
