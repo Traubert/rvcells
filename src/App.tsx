@@ -9,6 +9,7 @@ import { storageAvailable, saveWorkbook, loadWorkbook, listWorkbooks, generateId
 import type { WorkbookEntry } from "./engine/storage";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { HelpDialog } from "./components/HelpDialog";
+import { AboutDialog } from "./components/AboutDialog";
 import { SplashScreen } from "./components/SplashScreen";
 import type { Sheet } from "./engine/types";
 import type { FileFormat } from "./engine/file";
@@ -35,6 +36,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [openDialogOpen, setOpenDialogOpen] = useState(false);
   const [openDialogWorkbooks, setOpenDialogWorkbooks] = useState<WorkbookEntry[]>([]);
   const [confirmDelete, setConfirmDelete] = useState<{ index: number; message: string } | null>(null);
@@ -304,6 +306,7 @@ export default function App() {
               <button className="menu-item" onClick={handleMassExport}>Export all as zip</button>
               <div className="menu-divider" />
               <button className="menu-item" onClick={() => { setSettingsOpen(true); setMenuOpen(false); }}>Settings</button>
+              <button className="menu-item" onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>About</button>
               <button className="menu-item" onClick={() => { setHelpOpen(true); setMenuOpen(false); }}>Help</button>
             </div>
           )}
@@ -366,6 +369,9 @@ export default function App() {
       />
       {helpOpen && (
         <HelpDialog onClose={() => setHelpOpen(false)} onLoadExample={handleLoadExample} />
+      )}
+      {aboutOpen && (
+        <AboutDialog onClose={() => setAboutOpen(false)} />
       )}
       {settingsOpen && (
         <SettingsDialog

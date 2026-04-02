@@ -673,6 +673,30 @@
   letter-spacing: 0.08em;
 }
 
+/* About dialog */
+.about-dialog {
+  max-width: 400px;
+  text-align: center;
+  font-family: var(--font-ui);
+}
+
+.about-line {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.about-line a {
+  color: var(--accent);
+}
+
+.about-license {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 .splash-text {
   font-family: var(--font-ui);
   font-size: 13px;
