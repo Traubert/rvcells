@@ -122,7 +122,18 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     return resolveReference(compareRef, sheetIndex, allSheets);
   }, [compareRef, sheetIndex, allSheets, result]); // result dep ensures refresh on recalc
 
-  const compareResult = compareResolved?.cell.result;
+  const compareResult = useMemo(() => {
+    if (!compareResolved) return null;
+    const cmpCell = compareResolved.cell;
+    if (cmpCell.chainBody && chainStep > 0) {
+      try {
+        return getChainStepResult(cmpCell, compareResolved.addr, chainStep, allSheets, compareResolved.sheetIndex);
+      } catch {
+        return cmpCell.result ?? null;
+      }
+    }
+    return cmpCell.result ?? null;
+  }, [compareResolved, chainStep, allSheets]);
   const compareStats = useMemo(
     () => compareResult ? summarize(compareResult) : null,
     [compareResult]
