@@ -231,7 +231,7 @@ function globalCellDeps(
 
 /** Apply a binary operation elementwise, handling scalar/samples mixing */
 function binOp(
-  op: "+" | "-" | "*" | "/",
+  op: "+" | "-" | "*" | "/" | "==" | "!=" | ">" | "<" | ">=" | "<=",
   a: CellResult,
   b: CellResult,
   n: number
@@ -239,10 +239,16 @@ function binOp(
   // Both scalar
   if (a.kind === "scalar" && b.kind === "scalar") {
     switch (op) {
-      case "+": return { kind: "scalar", value: a.value + b.value };
-      case "-": return { kind: "scalar", value: a.value - b.value };
-      case "*": return { kind: "scalar", value: a.value * b.value };
-      case "/": return { kind: "scalar", value: a.value / b.value };
+      case "+":  return { kind: "scalar", value: a.value + b.value };
+      case "-":  return { kind: "scalar", value: a.value - b.value };
+      case "*":  return { kind: "scalar", value: a.value * b.value };
+      case "/":  return { kind: "scalar", value: a.value / b.value };
+      case "==": return { kind: "scalar", value: a.value === b.value ? 1 : 0 };
+      case "!=": return { kind: "scalar", value: a.value !== b.value ? 1 : 0 };
+      case ">":  return { kind: "scalar", value: a.value > b.value ? 1 : 0 };
+      case "<":  return { kind: "scalar", value: a.value < b.value ? 1 : 0 };
+      case ">=": return { kind: "scalar", value: a.value >= b.value ? 1 : 0 };
+      case "<=": return { kind: "scalar", value: a.value <= b.value ? 1 : 0 };
     }
   }
 
@@ -252,10 +258,16 @@ function binOp(
   const out = new Float64Array(n);
 
   switch (op) {
-    case "+": for (let i = 0; i < n; i++) out[i] = aArr[i] + bArr[i]; break;
-    case "-": for (let i = 0; i < n; i++) out[i] = aArr[i] - bArr[i]; break;
-    case "*": for (let i = 0; i < n; i++) out[i] = aArr[i] * bArr[i]; break;
-    case "/": for (let i = 0; i < n; i++) out[i] = aArr[i] / bArr[i]; break;
+    case "+":  for (let i = 0; i < n; i++) out[i] = aArr[i] + bArr[i]; break;
+    case "-":  for (let i = 0; i < n; i++) out[i] = aArr[i] - bArr[i]; break;
+    case "*":  for (let i = 0; i < n; i++) out[i] = aArr[i] * bArr[i]; break;
+    case "/":  for (let i = 0; i < n; i++) out[i] = aArr[i] / bArr[i]; break;
+    case "==": for (let i = 0; i < n; i++) out[i] = aArr[i] === bArr[i] ? 1 : 0; break;
+    case "!=": for (let i = 0; i < n; i++) out[i] = aArr[i] !== bArr[i] ? 1 : 0; break;
+    case ">":  for (let i = 0; i < n; i++) out[i] = aArr[i] > bArr[i] ? 1 : 0; break;
+    case "<":  for (let i = 0; i < n; i++) out[i] = aArr[i] < bArr[i] ? 1 : 0; break;
+    case ">=": for (let i = 0; i < n; i++) out[i] = aArr[i] >= bArr[i] ? 1 : 0; break;
+    case "<=": for (let i = 0; i < n; i++) out[i] = aArr[i] <= bArr[i] ? 1 : 0; break;
   }
 
   return { kind: "samples", values: out };

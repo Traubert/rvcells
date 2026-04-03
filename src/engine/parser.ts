@@ -233,7 +233,34 @@ function tokenize(input: string): Token[] {
       throw new Error(`Unexpected character: '$' at position ${i}`);
     }
 
-    // Operators and punctuation
+    // Multi-character comparison operators
+    if (input[i] === "=" && input[i + 1] === "=") {
+      tokens.push({ type: "op", value: "==" });
+      i += 2;
+      continue;
+    }
+    if (input[i] === "!" && input[i + 1] === "=") {
+      tokens.push({ type: "op", value: "!=" });
+      i += 2;
+      continue;
+    }
+    if (input[i] === ">" && input[i + 1] === "=") {
+      tokens.push({ type: "op", value: ">=" });
+      i += 2;
+      continue;
+    }
+    if (input[i] === "<" && input[i + 1] === "=") {
+      tokens.push({ type: "op", value: "<=" });
+      i += 2;
+      continue;
+    }
+    // Single-character comparison operators
+    if (input[i] === ">" || input[i] === "<") {
+      tokens.push({ type: "op", value: input[i++] });
+      continue;
+    }
+
+    // Arithmetic operators and punctuation
     if ("+-*/".includes(input[i])) {
       tokens.push({ type: "op", value: input[i++] });
       continue;
@@ -286,8 +313,24 @@ class Parser {
     return tok?.type === "op" ? tok.value : null;
   }
 
-  /** expr = term (('+' | '-') term)* */
+  private isComparisonOp(): boolean {
+    const op = this.peekOp();
+    return op === "==" || op === "!=" || op === ">" || op === "<" || op === ">=" || op === "<=";
+  }
+
+  /** expr = additive ((comparison_op) additive)* */
   parseExpression(): Expr {
+    let left = this.parseAdditive();
+    while (this.isComparisonOp()) {
+      const op = this.advance() as { type: "op"; value: string };
+      const right = this.parseAdditive();
+      left = { type: "binOp", op: op.value as "==" | "!=" | ">" | "<" | ">=" | "<=", left, right };
+    }
+    return left;
+  }
+
+  /** additive = term (('+' | '-') term)* */
+  private parseAdditive(): Expr {
     let left = this.parseTerm();
     while (this.peekOp() === "+" || this.peekOp() === "-") {
       const op = this.advance() as { type: "op"; value: string };

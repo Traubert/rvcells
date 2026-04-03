@@ -389,6 +389,96 @@ describe("parseExpr", () => {
     });
   });
 
+  describe("comparison operators", () => {
+    it("parses == operator", () => {
+      expect(parseExpr("A1 == 4")).toEqual({
+        type: "binOp",
+        op: "==",
+        left: { type: "cellRef", col: 0, row: 0 },
+        right: { type: "number", value: 4 },
+      });
+    });
+
+    it("parses != operator", () => {
+      expect(parseExpr("A1 != 0")).toEqual({
+        type: "binOp",
+        op: "!=",
+        left: { type: "cellRef", col: 0, row: 0 },
+        right: { type: "number", value: 0 },
+      });
+    });
+
+    it("parses > operator", () => {
+      expect(parseExpr("A1 > 5")).toEqual({
+        type: "binOp",
+        op: ">",
+        left: { type: "cellRef", col: 0, row: 0 },
+        right: { type: "number", value: 5 },
+      });
+    });
+
+    it("parses < operator", () => {
+      expect(parseExpr("A1 < 10")).toEqual({
+        type: "binOp",
+        op: "<",
+        left: { type: "cellRef", col: 0, row: 0 },
+        right: { type: "number", value: 10 },
+      });
+    });
+
+    it("parses >= operator", () => {
+      expect(parseExpr("A1 >= 3")).toEqual({
+        type: "binOp",
+        op: ">=",
+        left: { type: "cellRef", col: 0, row: 0 },
+        right: { type: "number", value: 3 },
+      });
+    });
+
+    it("parses <= operator", () => {
+      expect(parseExpr("A1 <= 7")).toEqual({
+        type: "binOp",
+        op: "<=",
+        left: { type: "cellRef", col: 0, row: 0 },
+        right: { type: "number", value: 7 },
+      });
+    });
+
+    it("comparisons have lower precedence than arithmetic", () => {
+      // 1 + 2 == 3 should parse as (1 + 2) == 3
+      const result = parseExpr("1 + 2 == 3");
+      expect(result).toEqual({
+        type: "binOp",
+        op: "==",
+        left: {
+          type: "binOp",
+          op: "+",
+          left: { type: "number", value: 1 },
+          right: { type: "number", value: 2 },
+        },
+        right: { type: "number", value: 3 },
+      });
+    });
+
+    it("comparisons work inside function calls", () => {
+      const result = parseExpr("if(state == 2, A1, B1)");
+      expect(result).toEqual({
+        type: "funcCall",
+        name: "if",
+        args: [
+          {
+            type: "binOp",
+            op: "==",
+            left: { type: "varRef", name: "state" },
+            right: { type: "number", value: 2 },
+          },
+          { type: "cellRef", col: 0, row: 0 },
+          { type: "cellRef", col: 1, row: 0 },
+        ],
+      });
+    });
+  });
+
   describe("pinned cell references ($)", () => {
     it("parses $A1 as pinned column", () => {
       expect(parseExpr("$A1")).toEqual({ type: "cellRef", col: 0, row: 0, pinCol: true });

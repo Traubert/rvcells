@@ -102,6 +102,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Save/load to browser storage (localStorage with manual index)
   - [x] Mass export/import as zip bundle of all saved workbooks
 - [ ] Undo/redo
+  - [ ] Undo tree?
 - [ ] Cell formatting (labels, number formats)
 - [ ] Functions on ranges: SUM, MEAN, etc.
 - [x] Range fill: drag fill handle to copy cell with shifted references
@@ -121,6 +122,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Consider: logistic distribution, log-logistic distribution
 - [x] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
 - [ ] Highlight the row and column labels of the active cell
+- [ ] Autosave (only after undo, and with option to disable)
 
 ## Design Principles
 
