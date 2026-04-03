@@ -22,6 +22,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 11, summary: "Variable assignment with := syntax, unicode variable names" },
   { version: 12, summary: "SI suffix formatting for large and small numbers (M, G, T, \u2026 / \u03bc, n, p, \u2026)" },
   { version: 13, summary: "Comparison operators in formulas: ==, !=, >, <, >=, <=" },
+  { version: 14, summary: "Markov() transition diagram syntax for Markov chains" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

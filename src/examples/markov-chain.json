@@ -79,6 +79,39 @@
         "A17": "The income chain references the employed chain, so they",
         "A18": "stay synchronized (step 5 of income uses step 5 of employed)."
       }
+    },
+    {
+      "name": "Markov",
+      "cells": {
+        "A1": "Same model using Markov() — transition diagram syntax",
+        "A3": "1. Define emission distributions (one per state)",
+        "A4": "Employed income",
+        "B4": "emp = Normal(5000, 500)",
+        "A5": "Unemployed income",
+        "B5": "unemp = Normal(1500, 300)",
+        "A7": "2. Define the Markov chain",
+        "A8": "Income process",
+        "B8": "income = Markov(emp: 0.95 -> emp, 0.05 -> unemp; unemp: 0.2 -> emp)",
+        "A10": "3. Access specific steps with ChainIndex",
+        "A11": "Income at month 12",
+        "B11": ":= ChainIndex(income, 12)",
+        "A13": "How it works",
+        "A14": "State names (emp, unemp) are variables holding",
+        "A15": "emission distributions. Each step, the chain",
+        "A16": "transitions between states and samples from the",
+        "A17": "current state's distribution.",
+        "A19": "The first state listed is the initial state.",
+        "A20": "Use 'init' to override: init unemp",
+        "A21": "Probabilistic init also works: init: 0.5 -> emp, 0.5 -> unemp",
+        "A23": "Missing probability mass goes to self-transition.",
+        "A24": "Above, unemp only specifies 0.2 -> emp, so the",
+        "A25": "remaining 0.8 stays in unemp automatically.",
+        "A27": "States can also define emissions inline:",
+        "B27": "inc = Markov(e = Normal(5000, 500): 0.95 -> e, 0.05 -> u; u = Normal(1500, 300): 0.2 -> e)",
+        "A28": "This is fully self-contained — no separate cells needed.",
+        "A30": "Click a Markov cell to see the Timeline fan chart.",
+        "A31": "ChainIndex works just like with Chain cells."
+      }
     }
   ]
 }

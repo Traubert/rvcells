@@ -479,6 +479,187 @@ describe("parseExpr", () => {
     });
   });
 
+  describe("Markov expressions", () => {
+    it("parses basic Markov with two variable states", () => {
+      const result = parseExpr("Markov(s0: 0.9 -> s0, 0.1 -> s1; s1: 0.2 -> s0, 0.8 -> s1)");
+      expect(result).toEqual({
+        type: "markov",
+        states: [
+          { name: "s0", emission: { type: "varRef", name: "s0" }, transitions: [{ prob: 0.9, target: "s0" }, { prob: 0.1, target: "s1" }] },
+          { name: "s1", emission: { type: "varRef", name: "s1" }, transitions: [{ prob: 0.2, target: "s0" }, { prob: 0.8, target: "s1" }] },
+        ],
+        init: { kind: "deterministic", state: "s0" },
+      });
+    });
+
+    it("defaults init to first state", () => {
+      const result = parseExpr("Markov(a: 1 -> b; b: 1 -> a)");
+      expect(result).toEqual({
+        type: "markov",
+        states: [
+          { name: "a", emission: { type: "varRef", name: "a" }, transitions: [{ prob: 1, target: "b" }] },
+          { name: "b", emission: { type: "varRef", name: "b" }, transitions: [{ prob: 1, target: "a" }] },
+        ],
+        init: { kind: "deterministic", state: "a" },
+      });
+    });
+
+    it("parses explicit init with deterministic state", () => {
+      const result = parseExpr("Markov(s0: 0.5 -> s1; s1: 0.5 -> s0; init s1)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.init).toEqual({ kind: "deterministic", state: "s1" });
+      }
+    });
+
+    it("parses probabilistic init", () => {
+      const result = parseExpr("Markov(s0: 0.5 -> s1; s1: 0.5 -> s0; init: 0.3 -> s0, 0.7 -> s1)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.init).toEqual({
+          kind: "probabilistic",
+          transitions: [{ prob: 0.3, target: "s0" }, { prob: 0.7, target: "s1" }],
+        });
+      }
+    });
+
+    it("parses single transition per state (implicit self-transition)", () => {
+      const result = parseExpr("Markov(s0: 0.1 -> s1; s1: 0.2 -> s0)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].transitions).toEqual([{ prob: 0.1, target: "s1" }]);
+        expect(result.states[1].transitions).toEqual([{ prob: 0.2, target: "s0" }]);
+      }
+    });
+
+    it("parses three states", () => {
+      const result = parseExpr("Markov(s0: 0.7 -> s0, 0.2 -> s1, 0.1 -> s2; s1: 0.8 -> s1, 0.2 -> s0; s2: 1 -> s2)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states).toHaveLength(3);
+        expect(result.states.map(s => s.name)).toEqual(["s0", "s1", "s2"]);
+      }
+    });
+
+    it("parses cell references as states", () => {
+      const result = parseExpr("Markov(A1: 0.9 -> A1, 0.1 -> B1; B1: 0.2 -> A1, 0.8 -> B1)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission).toEqual({ type: "cellRef", col: 0, row: 0 });
+        expect(result.states[1].emission).toEqual({ type: "cellRef", col: 1, row: 0 });
+        // Cell ref names are lowercased addresses
+        expect(result.states[0].name).toBe("a1");
+        expect(result.states[1].name).toBe("b1");
+        expect(result.states[0].transitions[1].target).toBe("b1");
+      }
+    });
+
+    it("parses mixed variable and cell ref states", () => {
+      const result = parseExpr("Markov(employed: 0.9 -> employed, 0.1 -> A1; A1: 0.5 -> employed, 0.5 -> A1)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission).toEqual({ type: "varRef", name: "employed" });
+        expect(result.states[1].emission).toEqual({ type: "cellRef", col: 0, row: 0 });
+      }
+    });
+
+    it("parses cross-sheet variable references", () => {
+      const result = parseExpr("Markov(Data.emp: 0.5 -> Data.unemp; Data.unemp: 0.5 -> Data.emp)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission).toEqual({ type: "sheetVarRef", sheet: "Data", name: "emp" });
+        expect(result.states[0].name).toBe("data.emp");
+        expect(result.states[0].transitions[0].target).toBe("data.unemp");
+      }
+    });
+
+    it("parses quoted cross-sheet references", () => {
+      const result = parseExpr("Markov('My Sheet'.s0: 1 -> 'My Sheet'.s1; 'My Sheet'.s1: 1 -> 'My Sheet'.s0)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission).toEqual({ type: "sheetVarRef", sheet: "My Sheet", name: "s0" });
+        expect(result.states[0].name).toBe("'my sheet'.s0");
+      }
+    });
+
+    it("parses cross-sheet cell references", () => {
+      const result = parseExpr("Markov(Data.A1: 0.5 -> Data.B1; Data.B1: 0.5 -> Data.A1)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission).toEqual({ type: "sheetCellRef", sheet: "Data", col: 0, row: 0 });
+        expect(result.states[0].name).toBe("data.a1");
+      }
+    });
+
+    it("parses init with cell ref", () => {
+      const result = parseExpr("Markov(A1: 0.5 -> B1; B1: 0.5 -> A1; init B1)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.init).toEqual({ kind: "deterministic", state: "b1" });
+      }
+    });
+
+    it("parses inline emission definitions", () => {
+      const result = parseExpr("Markov(s0 = Normal(100, 10): 0.5 -> s0, 0.5 -> s1; s1 = Uniform(0, 50): 1 -> s0)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].name).toBe("s0");
+        expect(result.states[0].emission).toEqual({
+          type: "funcCall", name: "normal", args: [
+            { type: "number", value: 100 },
+            { type: "number", value: 10 },
+          ],
+        });
+        expect(result.states[1].name).toBe("s1");
+        expect(result.states[1].emission).toEqual({
+          type: "funcCall", name: "uniform", args: [
+            { type: "number", value: 0 },
+            { type: "number", value: 50 },
+          ],
+        });
+      }
+    });
+
+    it("parses inline emission with complex expression", () => {
+      const result = parseExpr("Markov(s0 = A1 + Normal(10, 1): 0.5 -> s1; s1 = 0: 1 -> s0)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission.type).toBe("binOp");
+        expect(result.states[1].emission).toEqual({ type: "number", value: 0 });
+      }
+    });
+
+    it("mixes inline and reference states", () => {
+      const result = parseExpr("Markov(s0: 0.5 -> s0, 0.5 -> s1; s1 = Normal(0, 1): 1 -> s0)");
+      expect(result.type).toBe("markov");
+      if (result.type === "markov") {
+        expect(result.states[0].emission).toEqual({ type: "varRef", name: "s0" });
+        expect(result.states[1].emission.type).toBe("funcCall");
+      }
+    });
+
+    it("works in variable assignment", () => {
+      const result = parseCell("state = Markov(s0: 0.9 -> s0, 0.1 -> s1; s1: 0.5 -> s0, 0.5 -> s1)");
+      expect(result.variableName).toBe("state");
+      expect(result.content.kind).toBe("formula");
+      if (result.content.kind === "formula") {
+        expect(result.content.expr.type).toBe("markov");
+      }
+    });
+
+    it("throws on empty Markov", () => {
+      expect(() => parseExpr("Markov()")).toThrow("requires at least one state");
+    });
+
+    it("throws on missing colon", () => {
+      expect(() => parseExpr("Markov(s0 0.5 -> s1)")).toThrow(":");
+    });
+
+    it("throws on missing arrow", () => {
+      expect(() => parseExpr("Markov(s0: 0.5 s1)")).toThrow("->");
+    });
+  });
+
   describe("pinned cell references ($)", () => {
     it("parses $A1 as pinned column", () => {
       expect(parseExpr("$A1")).toEqual({ type: "cellRef", col: 0, row: 0, pinCol: true });

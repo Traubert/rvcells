@@ -12,10 +12,10 @@ A spreadsheet application where **random variables are a first-class cell type**
 
 ### Source layout
 - `src/engine/types.ts` — core types (CellResult, Distribution, Expr, Cell, Sheet)
-- `src/engine/parser.ts` — cell input parser and recursive descent expression parser; supports cross-sheet refs (`Sheet.A1`, `'Sheet Name'.var`)
+- `src/engine/parser.ts` — cell input parser and recursive descent expression parser; supports cross-sheet refs (`Sheet.A1`, `'Sheet Name'.var`), comparison operators, Markov() transition diagram syntax
 - `src/engine/parser.test.ts` — parser test suite (vitest)
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
-- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex, summary stats, histograms, sheet rename/delete helpers
+- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex, Markov compilation and evaluation, summary stats, histograms, sheet rename/delete helpers
 - `src/engine/storage.ts` — localStorage persistence, zip mass export/import
 - `src/engine/file.ts` — JSON file format v2 (multi-sheet), import/export
 - `src/constants.ts` — shared string, numeric, and distribution name constants
@@ -45,7 +45,7 @@ A cell can optionally define a **named variable** by prefixing the content with 
 The dependency graph is a DAG evaluated in topological order across all sheets (global topo sort). Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents (including cross-sheet) are re-evaluated. Duplicate variable names are detected and errored (first definition wins).
 
 ### Display
-Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, warm orange → red = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells. Sensitivity tabs (Correlation, Variance, Tornado) only appear for formulas with 2+ distribution inputs. The Timeline tab only appears for Chain cells. When switching between cells, the active tab resets if no longer applicable.
+Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, warm orange → red = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells. Sensitivity tabs (Correlation, Variance, Tornado) only appear for formulas with 2+ distribution inputs. The Timeline tab only appears for Chain and Markov cells. When switching between cells, the active tab resets if no longer applicable.
 
 ## Feature List (prototype)
 
@@ -53,7 +53,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Editable grid (26 columns × 50 rows)
 - [x] Cell editing: type a number, a distribution spec, or a formula
 - [x] Distribution types: Normal, LogNormal, Uniform, Triangular, Beta, Pareto, Poisson, StudentT
-- [x] Formula parser: arithmetic operators (+, -, *, /), cell references (A1, B2), parentheses, unary minus
+- [x] Formula parser: arithmetic operators (+, -, *, /), comparison operators (==, !=, >, <, >=, <=), cell references (A1, B2), parentheses, unary minus
 - [x] Variable definitions: `name = expr` syntax in any cell, usable by name in other formulas
 - [x] DAG-based recalculation on any cell edit, with cycle detection
   - Single-cell edits: detect cycle at edit time, reject/error the edited cell
@@ -82,6 +82,13 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Chain(body, init): iterative process with lazy evaluation, auto-resample, cross-chain sync
 - [x] ChainIndex(chain, step): access distribution at a specific chain step
 - [x] `_t` contextual variable inside Chain bodies (current step number)
+- [x] Markov(states; init): transition diagram syntax compiling to Chain/Discrete/if
+  - State names reference emission distributions (variables, cell refs, or cross-sheet refs)
+  - Inline emission definitions: `s0 = Normal(100, 10): 0.5 -> s1`
+  - Implicit self-transitions for missing probability mass, auto-normalization
+  - Optional `init stateName` or `init: prob -> state, ...` for initial state
+  - Reuses Chain infrastructure: timeline fan chart, ChainIndex, cross-chain sync
+- [x] Comparison operators (==, !=, >, <, >=, <=) returning 1/0 per sample
 - [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls)
 - [x] Resizable detail panel (drag handle)
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete

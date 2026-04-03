@@ -1,4 +1,5 @@
-import type { CellContent, Distribution, Expr } from "./types";
+import type { CellContent, Distribution, Expr, MarkovInit, MarkovStateDef } from "./types";
+import { toAddress } from "./types";
 import { DISTRIBUTION_NAMES, ID_START, ID_CONT, ID_START_SRC, ID_CONT_SRC } from "../constants";
 
 /**
@@ -157,7 +158,11 @@ type Token =
   | { type: "dot" }
   | { type: "lparen" }
   | { type: "rparen" }
-  | { type: "comma" };
+  | { type: "comma" }
+  | { type: "arrow" }      // ->
+  | { type: "colon" }      // :
+  | { type: "semicolon" }  // ;
+  | { type: "assign" };    // = (single, inside Markov inline definitions)
 
 function tokenize(input: string): Token[] {
   const tokens: Token[] = [];
@@ -259,6 +264,19 @@ function tokenize(input: string): Token[] {
       tokens.push({ type: "op", value: input[i++] });
       continue;
     }
+    // Single = (assign, used in Markov inline definitions)
+    if (input[i] === "=") {
+      tokens.push({ type: "assign" });
+      i++;
+      continue;
+    }
+
+    // Arrow operator (must check before -)
+    if (input[i] === "-" && input[i + 1] === ">") {
+      tokens.push({ type: "arrow" });
+      i += 2;
+      continue;
+    }
 
     // Arithmetic operators and punctuation
     if ("+-*/".includes(input[i])) {
@@ -285,11 +303,28 @@ function tokenize(input: string): Token[] {
       i++;
       continue;
     }
+    if (input[i] === ":") {
+      tokens.push({ type: "colon" });
+      i++;
+      continue;
+    }
+    if (input[i] === ";") {
+      tokens.push({ type: "semicolon" });
+      i++;
+      continue;
+    }
 
     throw new Error(`Unexpected character: '${input[i]}' at position ${i}`);
   }
 
   return tokens;
+}
+
+/** Build a canonical label for a cross-sheet reference (used as Markov state name) */
+function sheetRefLabel(sheetName: string, ref: Expr): string {
+  if (ref.type === "sheetVarRef") return `${sheetName}.${ref.name}`.toLowerCase();
+  if (ref.type === "sheetCellRef") return `${sheetName}.${toAddress(ref.col, ref.row)}`.toLowerCase();
+  return sheetName.toLowerCase();
 }
 
 class Parser {
@@ -382,6 +417,133 @@ class Parser {
     throw new Error(`Expected cell reference or variable after '${sheetName}.'`);
   }
 
+  /**
+   * Parse Markov() arguments: state definitions separated by ';', optional 'init stateName'.
+   * First state is initial unless 'init' overrides it.
+   * Syntax: Markov(s0: 0.5 -> s1, 0.5 -> s2; s1: 0.8 -> s1, 0.2 -> s0; init s1)
+   *
+   * Inline emission definitions are also supported:
+   *   Markov(s0 = Normal(100, 10): 0.5 -> s0, 0.5 -> s1; s1 = Uniform(0, 50): 1 -> s0)
+   * Called after '(' has been consumed.
+   */
+  private parseMarkovArgs(): Expr {
+    const states: MarkovStateDef[] = [];
+    let init: MarkovInit | undefined;
+
+    while (true) {
+      const tok = this.peek();
+      if (!tok || tok.type === "rparen") break;
+
+      // 'init' clause: either 'init stateName' or 'init: prob -> state, ...'
+      // Note: 'init = expr' would be parsed as an inline state named 'init', not as init clause.
+      // This is fine — 'init' as a state name is unusual and the ambiguity resolves sensibly.
+      if (tok.type === "ident" && tok.name === "init" && this.tokens[this.pos + 1]?.type !== "assign") {
+        this.advance();
+        if (this.peek()?.type === "colon") {
+          this.advance(); // consume ':'
+          init = { kind: "probabilistic", transitions: this.parseTransitionList() };
+        } else {
+          const { name } = this.parseMarkovRef();
+          init = { kind: "deterministic", state: name };
+        }
+        if (this.peek()?.type === "semicolon") this.advance();
+        continue;
+      }
+
+      // State definition: either inline (name = expr: transitions) or reference (ref: transitions)
+      let name: string;
+      let emission: Expr;
+
+      if (tok.type === "ident" && this.tokens[this.pos + 1]?.type === "assign") {
+        // Inline: name = expr
+        this.advance(); // consume ident
+        this.advance(); // consume =
+        name = tok.name;
+        emission = this.parseExpression();
+      } else {
+        ({ name, emission } = this.parseMarkovRef());
+      }
+
+      if (this.peek()?.type !== "colon") throw new Error(`Expected ':' after state name '${name}'`);
+      this.advance(); // consume ':'
+
+      states.push({ name, emission, transitions: this.parseTransitionList() });
+
+      if (this.peek()?.type === "semicolon") {
+        this.advance();
+        continue;
+      }
+    }
+
+    if (this.peek()?.type !== "rparen") throw new Error("Expected ')' after Markov definition");
+    this.advance(); // consume ')'
+
+    if (states.length === 0) throw new Error("Markov() requires at least one state");
+
+    const defaultInit: MarkovInit = { kind: "deterministic", state: states[0].name };
+    return { type: "markov", states, init: init ?? defaultInit };
+  }
+
+  /** Parse a state/target reference: identifier, cell reference, or cross-sheet reference.
+   *  Returns a canonical name (for matching transitions) and an Expr node. */
+  private parseMarkovRef(): { name: string; emission: Expr } {
+    const tok = this.peek();
+    if (tok?.type === "ident") {
+      this.advance();
+      // Cross-sheet: ident.ref
+      if (this.peek()?.type === "dot") {
+        this.advance(); // consume dot
+        const ref = this.parseSheetRef(tok.original);
+        return { name: sheetRefLabel(tok.original, ref), emission: ref };
+      }
+      return { name: tok.name, emission: { type: "varRef", name: tok.name } };
+    }
+    // Quoted sheet name: 'Sheet Name'.ref
+    if (tok?.type === "quotedName") {
+      this.advance();
+      if (this.peek()?.type !== "dot") throw new Error(`Expected '.' after '${tok.name}'`);
+      this.advance(); // consume dot
+      const ref = this.parseSheetRef(tok.name);
+      return { name: sheetRefLabel(`'${tok.name}'`, ref), emission: ref };
+    }
+    if (tok?.type === "cellRef") {
+      this.advance();
+      const addr = toAddress(tok.col, tok.row);
+      return {
+        name: addr.toLowerCase(),
+        emission: {
+          type: "cellRef", col: tok.col, row: tok.row,
+          ...(tok.pinCol ? { pinCol: true } : {}),
+          ...(tok.pinRow ? { pinRow: true } : {}),
+        },
+      };
+    }
+    throw new Error("Expected state name (variable or cell reference) in Markov()");
+  }
+
+  /** Parse a comma-separated list of transitions: prob -> target, prob -> target */
+  private parseTransitionList(): { prob: number; target: string }[] {
+    const transitions: { prob: number; target: string }[] = [];
+    while (true) {
+      const probTok = this.peek();
+      if (!probTok || probTok.type !== "number") throw new Error("Expected probability in transition");
+      this.advance();
+
+      if (this.peek()?.type !== "arrow") throw new Error("Expected '->' after probability");
+      this.advance();
+
+      const { name } = this.parseMarkovRef();
+      transitions.push({ prob: probTok.value, target: name });
+
+      if (this.peek()?.type === "comma") {
+        this.advance();
+        continue;
+      }
+      break;
+    }
+    return transitions;
+  }
+
   /** primary = number | cellRef | quotedName '.' ref | ident '.' ref | ident '(' args ')' | ident | '(' expr ')' */
   private parsePrimary(): Expr {
     const tok = this.peek();
@@ -423,6 +585,12 @@ class Parser {
       // Function call?
       if (this.peek()?.type === "lparen") {
         this.advance(); // consume '('
+
+        // Special parsing for Markov()
+        if (tok.name === "markov") {
+          return this.parseMarkovArgs();
+        }
+
         const args: Expr[] = [];
         if (this.peek()?.type !== "rparen") {
           args.push(this.parseExpression());

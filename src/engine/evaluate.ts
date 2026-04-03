@@ -1,4 +1,4 @@
-import type { Cell, CellAddress, CellResult, Expr, Sheet } from "./types";
+import type { Cell, CellAddress, CellResult, Expr, MarkovInit, MarkovStateDef, Sheet } from "./types";
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
@@ -73,6 +73,12 @@ function exprDeps(expr: Expr): {
         break;
       case "funcCall":
         e.args.forEach(walk);
+        break;
+      case "markov":
+        // Walk emission references (varRef or cellRef) for dependency tracking
+        for (const state of e.states) {
+          walk(state.emission);
+        }
         break;
     }
   }
@@ -162,11 +168,11 @@ interface CrossSheetCtx {
   allResults: Map<CellAddress, CellResult>[];
 }
 
-/** Check if a cell's formula is a Chain() call */
+/** Check if a cell's formula is a Chain() or Markov() call */
 function isChainCell(cell: Cell): boolean {
-  return cell.content.kind === "formula"
-    && cell.content.expr.type === "funcCall"
-    && cell.content.expr.name === "chain";
+  if (cell.content.kind !== "formula") return false;
+  const expr = cell.content.expr;
+  return (expr.type === "funcCall" && expr.name === "chain") || expr.type === "markov";
 }
 
 /** Get all direct dependencies of a cell as cell addresses (local only) */
@@ -343,6 +349,52 @@ function evalExpr(
 
     case "funcCall":
       return evalFunc(expr.name, expr.args, results, varMap, n, cells, ctx);
+
+    case "markov": {
+      const selfVar = _currentEvalCell?.variableName;
+      if (!selfVar) throw new Error("Markov() must be assigned to a named variable");
+      const selfAddr = varMap.get(selfVar);
+      if (!selfAddr) throw new Error("Markov() variable not found in varMap");
+
+      // Compile transition matrix and validate state references
+      const { stateNames, transitions } = compileMarkovDef(expr.states, expr.init);
+
+      for (const state of expr.states) {
+        if (state.emission.type === "varRef") {
+          if (!varMap.get(state.emission.name))
+            throw new Error(`Unknown variable '${state.emission.name}' in Markov state '${state.name}'`);
+        } else if (state.emission.type === "cellRef") {
+          const addr = toAddress(state.emission.col, state.emission.row);
+          if (!cells.has(addr))
+            throw new Error(`Empty cell ${addr} referenced in Markov state '${state.name}'`);
+        }
+      }
+
+      // Compile to Chain-compatible Expr trees
+      const stateBody = compileMarkovStateBody(selfVar, transitions);
+      const emissionBody = compileMarkovEmissionBody(selfVar, expr.states);
+      const initExpr = compileMarkovInit(expr.init, stateNames);
+
+      // Evaluate initial state (scalar for deterministic, samples for Discrete)
+      const initStateResult = evalExpr(initExpr, results, varMap, n, cells, ctx);
+      const initialStates = toArray(initStateResult, n);
+
+      // Evaluate initial emission by injecting initial state as self-reference
+      const shadowResults = new Map(results);
+      shadowResults.set(selfAddr, { kind: "samples", values: initialStates });
+      const initialEmission = evalExpr(emissionBody, shadowResults, varMap, n, cells, ctx);
+
+      // Store as Chain metadata — reuses Chain infrastructure for timeline/ChainIndex
+      if (_currentEvalCell) {
+        _currentEvalCell.chainBody = emissionBody;
+        _currentEvalCell.chainInitial = initialEmission;
+        _currentEvalCell.chainCache = undefined;
+        _currentEvalCell.markovDef = { stateBody, initialStates };
+        _currentEvalCell.markovStateCache = undefined;
+      }
+
+      return initialEmission;
+    }
   }
 }
 
@@ -415,6 +467,115 @@ function captureDist(label: string, result: CellResult, expectedValue?: number):
   return result;
 }
 
+// ─── Markov compilation ──────────────────────────────────────────────
+
+/**
+ * Compile a Markov definition into a normalized transition matrix.
+ * Missing probability mass is assigned to self-transitions; rows are normalized.
+ */
+function compileMarkovDef(
+  states: MarkovStateDef[],
+  init: MarkovInit,
+): { stateNames: string[]; transitions: number[][] } {
+  const stateNames = states.map(s => s.name);
+  const stateIndex = new Map(stateNames.map((n, i) => [n, i]));
+  const N = stateNames.length;
+
+  // Validate init references
+  if (init.kind === "deterministic") {
+    if (!stateIndex.has(init.state)) throw new Error(`Unknown initial state '${init.state}'`);
+  } else {
+    for (const { target } of init.transitions) {
+      if (!stateIndex.has(target)) throw new Error(`Unknown state '${target}' in Markov init`);
+    }
+  }
+
+  const transitions: number[][] = [];
+  for (let from = 0; from < N; from++) {
+    const row = new Array(N).fill(0);
+    for (const { prob, target } of states[from].transitions) {
+      const to = stateIndex.get(target);
+      if (to === undefined) throw new Error(`Unknown state '${target}' in Markov transition`);
+      row[to] += prob;
+    }
+    // Assign remaining mass to self-transition
+    const sum = row.reduce((a, b) => a + b, 0);
+    if (sum <= 0) throw new Error(`State '${stateNames[from]}' has no transition probability`);
+    row[from] += Math.max(0, 1 - sum);
+    // Normalize
+    const total = row.reduce((a, b) => a + b, 0);
+    for (let j = 0; j < N; j++) row[j] /= total;
+    transitions.push(row);
+  }
+
+  return { stateNames, transitions };
+}
+
+/**
+ * Compile the initial state into an Expr that evaluates to a state index.
+ * Deterministic: just a number literal. Probabilistic: Discrete() call.
+ */
+function compileMarkovInit(init: MarkovInit, stateNames: string[]): Expr {
+  const stateIndex = new Map(stateNames.map((name, i) => [name, i]));
+  if (init.kind === "deterministic") {
+    return { type: "number", value: stateIndex.get(init.state)! };
+  }
+  // Probabilistic: build Discrete(p0, p1, ..., pN) with probs in state order
+  const probs = new Array(stateNames.length).fill(0);
+  for (const { prob, target } of init.transitions) {
+    probs[stateIndex.get(target)!] += prob;
+  }
+  return {
+    type: "funcCall",
+    name: "discrete",
+    args: probs.map(p => ({ type: "number" as const, value: p })),
+  };
+}
+
+/**
+ * Build a nested if-chain expression for selecting among N alternatives by state index.
+ * if(self == 0, bodies[0], if(self == 1, bodies[1], ... bodies[N-1]))
+ * Uses the cell's self-variable reference so it works with Chain's shadowResults mechanism.
+ */
+function buildStateSwitch(selfName: string, bodies: Expr[]): Expr {
+  if (bodies.length === 1) return bodies[0];
+  // Build from the end: the last state is the else branch
+  let result: Expr = bodies[bodies.length - 1];
+  for (let i = bodies.length - 2; i >= 0; i--) {
+    result = {
+      type: "funcCall",
+      name: "if",
+      args: [
+        { type: "binOp", op: "==", left: { type: "varRef", name: selfName }, right: { type: "number", value: i } },
+        bodies[i],
+        result,
+      ],
+    };
+  }
+  return result;
+}
+
+/**
+ * Compile the state transition body from a Markov transition matrix.
+ * Produces: if(self == 0, Discrete(row0...), if(self == 1, Discrete(row1...), ...))
+ */
+function compileMarkovStateBody(selfName: string, transitions: number[][]): Expr {
+  const bodies = transitions.map(row => ({
+    type: "funcCall" as const,
+    name: "discrete",
+    args: row.map(p => ({ type: "number" as const, value: p })),
+  }));
+  return buildStateSwitch(selfName, bodies);
+}
+
+/**
+ * Compile the emission body from state definitions.
+ * Produces: if(self == 0, emission0, if(self == 1, emission1, emission2))
+ */
+function compileMarkovEmissionBody(selfName: string, states: MarkovStateDef[]): Expr {
+  return buildStateSwitch(selfName, states.map(s => s.emission));
+}
+
 /** Lazily compute chain steps up to targetStep, caching results.
  *  Referenced distribution cells are auto-resampled each step.
  *  Referenced chain cells are auto-synced to the same step. */
@@ -432,9 +593,14 @@ function evaluateChainStep(
     throw new Error("Not a chain cell");
   }
 
-  // Initialize cache with initial value
+  const isMarkov = !!chainCell.markovDef;
+
+  // Initialize caches with initial values
   if (!chainCell.chainCache) {
     chainCell.chainCache = [toArray(chainCell.chainInitial, n)];
+  }
+  if (isMarkov && !chainCell.markovStateCache) {
+    chainCell.markovStateCache = [chainCell.markovDef!.initialStates];
   }
 
   if (targetStep < chainCell.chainCache.length) {
@@ -477,9 +643,8 @@ function evaluateChainStep(
     const prevChainStep = _currentChainStep;
     _currentChainStep = t;
 
-    // Build shadow results: previous step for self-reference
+    // Build shadow results with resampled deps and synced chains
     const shadowResults = new Map(results);
-    shadowResults.set(chainAddr, { kind: "samples", values: chainCell.chainCache[t - 1] });
 
     // Auto-resample non-chain deps (fresh draws each step)
     for (const { addr, subDag } of resampleSubDags) {
@@ -500,9 +665,23 @@ function evaluateChainStep(
       shadowResults.set(addr, { kind: "samples", values: stepValues });
     }
 
-    // Evaluate body expression
-    const stepResult = evalExpr(chainCell.chainBody, shadowResults, varMap, n, cells, ctx);
-    chainCell.chainCache[t] = toArray(stepResult, n);
+    if (isMarkov) {
+      // Markov: two-phase evaluation wrapping two internal Chains
+      // Phase 1 — state transition: self-ref = previous state
+      shadowResults.set(chainAddr, { kind: "samples", values: chainCell.markovStateCache![t - 1] });
+      const newState = evalExpr(chainCell.markovDef!.stateBody, shadowResults, varMap, n, cells, ctx);
+      chainCell.markovStateCache![t] = toArray(newState, n);
+
+      // Phase 2 — emission: self-ref = new state (so emission body selects correct distribution)
+      shadowResults.set(chainAddr, { kind: "samples", values: chainCell.markovStateCache![t] });
+      const emission = evalExpr(chainCell.chainBody, shadowResults, varMap, n, cells, ctx);
+      chainCell.chainCache[t] = toArray(emission, n);
+    } else {
+      // Regular Chain: self-ref = previous step's value
+      shadowResults.set(chainAddr, { kind: "samples", values: chainCell.chainCache[t - 1] });
+      const stepResult = evalExpr(chainCell.chainBody, shadowResults, varMap, n, cells, ctx);
+      chainCell.chainCache[t] = toArray(stepResult, n);
+    }
 
     _currentChainStep = prevChainStep;
   }
@@ -1418,6 +1597,8 @@ function hasInlineDistribution(expr: Expr): boolean {
     case "funcCall":
       if (SAMPLE_CONSTRUCTORS.has(expr.name)) return true;
       return expr.args.some(hasInlineDistribution);
+    case "markov":
+      return false; // Markov emissions come from external cells, not inline
   }
 }
 
@@ -1600,6 +1781,8 @@ function collectInlineDistLabels(expr: Expr): string[] {
         }
         e.args.forEach(walk);
         break;
+      case "markov":
+        break; // Markov emissions come from external cells
     }
   }
   walk(expr);

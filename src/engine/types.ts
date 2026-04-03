@@ -23,7 +23,20 @@ export type Expr =
   | { type: "sheetVarRef"; sheet: string; name: string }
   | { type: "binOp"; op: "+" | "-" | "*" | "/" | "==" | "!=" | ">" | "<" | ">=" | "<="; left: Expr; right: Expr }
   | { type: "unaryMinus"; operand: Expr }
-  | { type: "funcCall"; name: string; args: Expr[] };
+  | { type: "funcCall"; name: string; args: Expr[] }
+  | { type: "markov"; states: MarkovStateDef[]; init: MarkovInit };
+
+/** A state definition in a Markov() expression */
+export interface MarkovStateDef {
+  name: string;          // state identifier for cross-referencing transitions
+  emission: Expr;        // reference to emission distribution (varRef or cellRef)
+  transitions: { prob: number; target: string }[];
+}
+
+/** Initial state specification: deterministic or probabilistic */
+export type MarkovInit =
+  | { kind: "deterministic"; state: string }
+  | { kind: "probabilistic"; transitions: { prob: number; target: string }[] };
 
 /** What the user typed into a cell, after parsing */
 export type CellContent =
@@ -51,6 +64,8 @@ export interface Cell {
   chainBody?: Expr;            // body expression (first arg of Chain)
   chainInitial?: CellResult;   // initial value (scalar or samples)
   chainCache?: Float64Array[];  // lazily computed steps; [0] = initial as array
+  markovDef?: { stateBody: Expr; initialStates: Float64Array };
+  markovStateCache?: Float64Array[];  // internal state indices per step
 }
 
 /** Cell address as "A1" style string */

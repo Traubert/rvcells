@@ -53,7 +53,7 @@ All built-in functions work the same way:
 | `min(x, y)`, `max(x, y)` | Smaller / larger of two values |
 | `floor(x)`, `ceil(x)`, `round(x)` | Rounding |
 | `clamp(x, lo, hi)` | Constrain x to the range [lo, hi] |
-| `if(cond, then, else)` | Per-sample conditional (cond > 0 picks *then*) |
+| `if(cond, then, else)` | Per-sample conditional (cond > 0 picks *then*; use `==`, `>`, etc.) |
 
 Distributions can also be used directly in formulas. This is equivalent to creating a distribution in a separate cell and referencing it, except that the samples are generated fresh each time the formula is evaluated:
 
@@ -289,6 +289,62 @@ x = Chain(x * (1 + 0.001 * _t), 100)
 ```
 
 **Timeline visualization.** Click a Chain cell to see the detail panel. Use the step controls (◀ ▶) to walk through individual steps — the histogram, stats, and sensitivity tabs update per step. The **Timeline** tab shows a fan chart of the full trajectory: P5–P95 and P25–P75 percentile bands with the median line. Drag the resize handle at the top of the detail panel to expand the chart.
+
+### Markov: transition diagrams
+
+The manual Markov chain approach (using `if()` and `Bernoulli()` row by row) and the Chain approach both work, but they require you to wire up the transition logic yourself. The `Markov()` function provides a dedicated syntax for defining transition diagrams.
+
+**Basic usage.** Define emission distributions in separate cells, then describe the transitions:
+
+```
+B1: emp = Normal(5000, 500)
+B2: unemp = Normal(1500, 300)
+B4: income = Markov(emp: 0.95 -> emp, 0.05 -> unemp; unemp: 0.2 -> emp)
+```
+
+Each state is named after the variable it emits from. The syntax `emp: 0.95 -> emp, 0.05 -> unemp` means: "when in state `emp`, stay with probability 0.95, transition to `unemp` with probability 0.05." States are separated by semicolons.
+
+At each step, the chain transitions to a new state and samples from that state's emission distribution. The result is a full distribution at every step — click the cell for the timeline fan chart, or use `ChainIndex(income, 12)` to get month 12.
+
+**Implicit self-transitions.** Missing probability mass is assigned to self-transitions automatically. In the example above, `unemp` only specifies `0.2 -> emp`, so the remaining 0.8 stays in `unemp`. You never need to list a self-transition unless you want to be explicit.
+
+Probabilities are also normalised, so you can use unnormalised weights or percentages — `s0: 80 -> s0, 20 -> s1` works the same as `s0: 0.8 -> s0, 0.2 -> s1`.
+
+**Initial state.** The first state listed is the initial state by default. To start in a different state, add `init`:
+
+```
+Markov(s0: 0.5 -> s1; s1: 0.5 -> s0; init s1)
+```
+
+For a probabilistic start, use `init:` with transitions:
+
+```
+Markov(s0: 0.5 -> s1; s1: 0.5 -> s0; init: 0.3 -> s0, 0.7 -> s1)
+```
+
+**Inline emissions.** Instead of defining emissions in separate cells, you can define them inline with `=`:
+
+```
+income = Markov(e = Normal(5000, 500): 0.95 -> e, 0.05 -> u; u = Normal(1500, 300): 0.2 -> e)
+```
+
+This is fully self-contained — no other cells needed. The inline expressions can be arbitrarily complex (formulas, cell references, etc.).
+
+**Cell references as states.** States can also reference cells by address instead of variable name:
+
+```
+Markov(A1: 0.9 -> A1, 0.1 -> B1; B1: 0.2 -> A1)
+```
+
+Cross-sheet references work too: `Markov(Data.emp: 0.9 -> Data.emp, 0.1 -> Data.unemp; ...)`.
+
+**Comparison operators.** Formulas now support `==`, `!=`, `>`, `<`, `>=`, `<=`. These return 1 (true) or 0 (false) per sample, and can be used with `if()`:
+
+```
+= if(state == 2, Normal(100, 10), Normal(50, 5))
+```
+
+Comparisons bind at lower precedence than arithmetic, so `A1 + 1 == B1` parses as `(A1 + 1) == B1`.
 
 ## Analysis views
 
