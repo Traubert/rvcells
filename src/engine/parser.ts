@@ -162,7 +162,9 @@ type Token =
   | { type: "arrow" }      // ->
   | { type: "colon" }      // :
   | { type: "semicolon" }  // ;
-  | { type: "assign" };    // = (single, inside Markov inline definitions)
+  | { type: "assign" }     // = (single, inside Markov inline definitions)
+  | { type: "lbracket" }   // [
+  | { type: "rbracket" };  // ]
 
 function tokenize(input: string): Token[] {
   const tokens: Token[] = [];
@@ -310,6 +312,16 @@ function tokenize(input: string): Token[] {
     }
     if (input[i] === ";") {
       tokens.push({ type: "semicolon" });
+      i++;
+      continue;
+    }
+    if (input[i] === "[") {
+      tokens.push({ type: "lbracket" });
+      i++;
+      continue;
+    }
+    if (input[i] === "]") {
+      tokens.push({ type: "rbracket" });
       i++;
       continue;
     }
@@ -544,7 +556,44 @@ class Parser {
     return transitions;
   }
 
-  /** primary = number | cellRef | quotedName '.' ref | ident '.' ref | ident '(' args ')' | ident | '(' expr ')' */
+  /**
+   * If the next token is '[', parse a chain index or chain range suffix.
+   * target[expr]        → funcCall("chainindex", [target, expr])
+   * target[expr:expr]   → chainRange
+   * target[:expr]       → chainRange with start=0
+   * Otherwise returns the target unchanged.
+   */
+  private parseBracketSuffix(target: Expr): Expr {
+    if (this.peek()?.type !== "lbracket") return target;
+    this.advance(); // consume '['
+
+    // Check for [:end] shorthand
+    if (this.peek()?.type === "colon") {
+      this.advance(); // consume ':'
+      const end = this.parseExpression();
+      if (this.peek()?.type !== "rbracket") throw new Error("Expected ']'");
+      this.advance();
+      return { type: "chainRange", target, start: { type: "number", value: 0 }, end };
+    }
+
+    const first = this.parseExpression();
+
+    if (this.peek()?.type === "colon") {
+      // Range: target[start:end]
+      this.advance(); // consume ':'
+      const end = this.parseExpression();
+      if (this.peek()?.type !== "rbracket") throw new Error("Expected ']'");
+      this.advance();
+      return { type: "chainRange", target, start: first, end };
+    }
+
+    // Single index: target[step] → ChainIndex(target, step)
+    if (this.peek()?.type !== "rbracket") throw new Error("Expected ']' or ':'");
+    this.advance();
+    return { type: "funcCall", name: "chainindex", args: [target, first] };
+  }
+
+  /** primary = number | cellRef (':' cellRef)? | quotedName '.' ref | ident '.' ref | ident '(' args ')' | ident | '(' expr ')' */
   private parsePrimary(): Expr {
     const tok = this.peek();
     if (!tok) throw new Error("Unexpected end of expression");
@@ -556,13 +605,27 @@ class Parser {
 
     if (tok.type === "cellRef") {
       this.advance();
-      return {
+      // Cell range: A1:B10
+      if (this.peek()?.type === "colon") {
+        const next = this.tokens[this.pos + 1];
+        if (next?.type === "cellRef") {
+          this.advance(); // consume ':'
+          this.advance(); // consume end cellRef
+          return {
+            type: "cellRange",
+            startCol: tok.col, startRow: tok.row,
+            endCol: next.col, endRow: next.row,
+          };
+        }
+      }
+      const ref: Expr = {
         type: "cellRef",
         col: tok.col,
         row: tok.row,
         ...(tok.pinCol ? { pinCol: true } : {}),
         ...(tok.pinRow ? { pinRow: true } : {}),
       };
+      return this.parseBracketSuffix(ref);
     }
 
     // Quoted sheet name: 'Sheet Name'.ref
@@ -572,7 +635,8 @@ class Parser {
         throw new Error(`Expected '.' after '${tok.name}'`);
       }
       this.advance(); // consume dot
-      return this.parseSheetRef(tok.name);
+      const ref = this.parseSheetRef(tok.name);
+      return this.parseBracketSuffix(ref);
     }
 
     if (tok.type === "ident") {
@@ -580,7 +644,12 @@ class Parser {
       // Cross-sheet reference: ident.ref
       if (this.peek()?.type === "dot") {
         this.advance(); // consume dot
-        return this.parseSheetRef(tok.original);
+        const ref = this.parseSheetRef(tok.original);
+        return this.parseBracketSuffix(ref);
+      }
+      // Bracket index/range: ident[...] (check before lparen)
+      if (this.peek()?.type === "lbracket") {
+        return this.parseBracketSuffix({ type: "varRef", name: tok.name });
       }
       // Function call?
       if (this.peek()?.type === "lparen") {

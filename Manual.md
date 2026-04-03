@@ -50,10 +50,15 @@ All built-in functions work the same way:
 | `log(x)`, `ln(x)` | Natural logarithm |
 | `log10(x)` | Base-10 logarithm |
 | `pow(x, y)` | x raised to power y |
-| `min(x, y)`, `max(x, y)` | Smaller / larger of two values |
+| `min(...)`, `max(...)` | Elementwise min/max (2+ args or range); single dist → sample min/max |
 | `floor(x)`, `ceil(x)`, `round(x)` | Rounding |
 | `clamp(x, lo, hi)` | Constrain x to the range [lo, hi] |
 | `if(cond, then, else)` | Per-sample conditional (cond > 0 picks *then*; use `==`, `>`, etc.) |
+| `sum(...)`, `product(...)` | Sum/product over range or multiple args |
+| `mean(...)` | Elementwise mean of range; or expected value of single distribution |
+| `median(...)` | Elementwise median of range; or P50 of single distribution |
+| `geomean(...)` | Geometric mean (range or single distribution) |
+| `P(dist, pct)` | Percentile value, e.g. `P(income, 95)` → P95 as scalar |
 
 Distributions can also be used directly in formulas. This is equivalent to creating a distribution in a separate cell and referencing it, except that the samples are generated fresh each time the formula is evaluated:
 
@@ -345,6 +350,72 @@ Cross-sheet references work too: `Markov(Data.emp: 0.9 -> Data.emp, 0.1 -> Data.
 ```
 
 Comparisons bind at lower precedence than arithmetic, so `A1 + 1 == B1` parses as `(A1 + 1) == B1`.
+
+## Range functions
+
+Aggregate functions like `sum`, `mean`, `median`, `min`, `max`, `product`, and `geomean` operate on **ranges** — either cell ranges or chain step ranges.
+
+### Cell ranges
+
+Use spreadsheet-style `A1:A10` syntax inside function calls:
+
+```
+= sum(A1:A10)          (sum 10 cells)
+= mean(B2:B50)         (average of 49 cells)
+= min(A1:C3)           (elementwise min of a 3×3 block)
+```
+
+Both ends are inclusive. 2D ranges like `A1:C3` enumerate all cells in the rectangle (row-major order).
+
+### Chain step ranges
+
+Use bracket syntax to access a range of chain steps:
+
+```
+= sum(income[1:12])    (total income over 12 months)
+= mean(income[0:11])   (average monthly income)
+= income[:35]          (shorthand for income[0:35])
+= income[5]            (single step — same as ChainIndex(income, 5))
+```
+
+Both ends are inclusive: `income[1:12]` gives steps 1, 2, ..., 12 (12 values). The shorthand `income[:n]` omits the start, defaulting to 0.
+
+This works with Chain and Markov cells, and with cross-sheet references like `Data.income[0:12]`.
+
+### Arity-based behaviour
+
+These functions behave differently depending on how many values they receive:
+
+**Multiple values** (range or several arguments) → **elementwise aggregate**, producing a distribution:
+
+```
+= sum(A1:A10)              (sum of 10 cells → distribution)
+= mean(income[1:12])       (average of 12 chain steps → distribution)
+= min(model1, model2)      (elementwise min of two distributions)
+```
+
+**Single distribution** → **scalar collapse** (summary statistic):
+
+```
+= mean(income)             (expected value → scalar)
+= median(income)           (P50 → scalar)
+= min(income)              (sample minimum → scalar)
+= max(income)              (sample maximum → scalar)
+```
+
+This means `min(max(A1, A2, A3))` first computes the elementwise max of three distributions, then collapses to the sample minimum of that result — a scalar with a clear statistical meaning.
+
+### Percentile function
+
+`P(distribution, percentile)` extracts a specific percentile as a scalar:
+
+```
+= P(income, 95)            (95th percentile of income)
+= P(income, 5)             (5th percentile)
+= P(sum(income[1:12]), 50) (median of total annual income)
+```
+
+`P(dist, 50)` and `median(dist)` give the same result.
 
 ## Analysis views
 

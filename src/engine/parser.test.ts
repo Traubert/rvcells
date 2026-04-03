@@ -660,6 +660,102 @@ describe("parseExpr", () => {
     });
   });
 
+  describe("cell ranges", () => {
+    it("parses A1:A10", () => {
+      expect(parseExpr("A1:A10")).toEqual({
+        type: "cellRange", startCol: 0, startRow: 0, endCol: 0, endRow: 9,
+      });
+    });
+
+    it("parses 2D range A1:C3", () => {
+      expect(parseExpr("A1:C3")).toEqual({
+        type: "cellRange", startCol: 0, startRow: 0, endCol: 2, endRow: 2,
+      });
+    });
+
+    it("parses cell range inside function call", () => {
+      const result = parseExpr("sum(A1:A10)");
+      expect(result).toEqual({
+        type: "funcCall",
+        name: "sum",
+        args: [{ type: "cellRange", startCol: 0, startRow: 0, endCol: 0, endRow: 9 }],
+      });
+    });
+  });
+
+  describe("chain bracket syntax", () => {
+    it("parses single index as ChainIndex", () => {
+      expect(parseExpr("income[5]")).toEqual({
+        type: "funcCall",
+        name: "chainindex",
+        args: [
+          { type: "varRef", name: "income" },
+          { type: "number", value: 5 },
+        ],
+      });
+    });
+
+    it("parses range income[0:35]", () => {
+      expect(parseExpr("income[0:35]")).toEqual({
+        type: "chainRange",
+        target: { type: "varRef", name: "income" },
+        start: { type: "number", value: 0 },
+        end: { type: "number", value: 35 },
+      });
+    });
+
+    it("parses shorthand income[:35] with start=0", () => {
+      expect(parseExpr("income[:35]")).toEqual({
+        type: "chainRange",
+        target: { type: "varRef", name: "income" },
+        start: { type: "number", value: 0 },
+        end: { type: "number", value: 35 },
+      });
+    });
+
+    it("parses bracket on cell ref", () => {
+      expect(parseExpr("A1[0:5]")).toEqual({
+        type: "chainRange",
+        target: { type: "cellRef", col: 0, row: 0 },
+        start: { type: "number", value: 0 },
+        end: { type: "number", value: 5 },
+      });
+    });
+
+    it("parses bracket on cross-sheet ref", () => {
+      const result = parseExpr("Data.income[0:12]");
+      expect(result.type).toBe("chainRange");
+      if (result.type === "chainRange") {
+        expect(result.target).toEqual({ type: "sheetVarRef", sheet: "Data", name: "income" });
+        expect(result.start).toEqual({ type: "number", value: 0 });
+        expect(result.end).toEqual({ type: "number", value: 12 });
+      }
+    });
+
+    it("parses chain range inside function call", () => {
+      const result = parseExpr("sum(income[0:11])");
+      expect(result).toEqual({
+        type: "funcCall",
+        name: "sum",
+        args: [{
+          type: "chainRange",
+          target: { type: "varRef", name: "income" },
+          start: { type: "number", value: 0 },
+          end: { type: "number", value: 11 },
+        }],
+      });
+    });
+
+    it("parses expression indices", () => {
+      const result = parseExpr("income[n - 1]");
+      expect(result.type).toBe("funcCall");
+      if (result.type === "funcCall") {
+        expect(result.name).toBe("chainindex");
+        expect(result.args[1].type).toBe("binOp");
+      }
+    });
+  });
+
   describe("pinned cell references ($)", () => {
     it("parses $A1 as pinned column", () => {
       expect(parseExpr("$A1")).toEqual({ type: "cellRef", col: 0, row: 0, pinCol: true });

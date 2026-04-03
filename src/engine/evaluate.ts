@@ -80,6 +80,16 @@ function exprDeps(expr: Expr): {
           walk(state.emission);
         }
         break;
+      case "cellRange":
+        for (let r = e.startRow; r <= e.endRow; r++)
+          for (let c = e.startCol; c <= e.endCol; c++)
+            cellRefs.push(toAddress(c, r));
+        break;
+      case "chainRange":
+        walk(e.target);
+        walk(e.start);
+        walk(e.end);
+        break;
     }
   }
   walk(expr);
@@ -395,6 +405,12 @@ function evalExpr(
 
       return initialEmission;
     }
+
+    case "cellRange":
+      throw new Error("Cell ranges (A1:B10) can only be used inside function arguments");
+
+    case "chainRange":
+      throw new Error("Chain ranges (x[0:10]) can only be used inside function arguments");
   }
 }
 
@@ -689,6 +705,128 @@ function evaluateChainStep(
   return chainCell.chainCache[targetStep];
 }
 
+/**
+ * Expand function arguments, resolving cell ranges and chain ranges into lists of CellResult.
+ * Returns the expanded values and whether any argument was a range (for arity disambiguation).
+ */
+function expandArgs(
+  argExprs: Expr[],
+  results: Map<CellAddress, CellResult>,
+  varMap: Map<string, CellAddress>,
+  n: number,
+  cells: Map<CellAddress, Cell>,
+  ctx?: CrossSheetCtx,
+): { values: CellResult[]; hasRange: boolean } {
+  const values: CellResult[] = [];
+  let hasRange = false;
+
+  for (const e of argExprs) {
+    if (e.type === "cellRange") {
+      hasRange = true;
+      for (let r = e.startRow; r <= e.endRow; r++)
+        for (let c = e.startCol; c <= e.endCol; c++) {
+          const addr = toAddress(c, r);
+          values.push(results.get(addr) ?? { kind: "scalar", value: 0 });
+        }
+    } else if (e.type === "chainRange") {
+      hasRange = true;
+      // Resolve chain cell
+      const target = e.target;
+      let targetAddr: CellAddress;
+      if (target.type === "cellRef") {
+        targetAddr = toAddress(target.col, target.row);
+      } else if (target.type === "varRef") {
+        const resolved = varMap.get(target.name);
+        if (!resolved) throw new Error(`Unknown variable: ${target.name}`);
+        targetAddr = resolved;
+      } else if (target.type === "sheetVarRef" || target.type === "sheetCellRef") {
+        // Cross-sheet: resolve via context
+        if (!ctx) throw new Error("Cross-sheet chain ranges require multi-sheet context");
+        const targetIdx = findSheetIndex(ctx.allSheets, target.type === "sheetVarRef" ? target.sheet : target.sheet);
+        if (targetIdx < 0) throw new Error(`Unknown sheet: ${target.sheet}`);
+        if (target.type === "sheetVarRef") {
+          const addr = ctx.allVarMaps[targetIdx].get(target.name);
+          if (!addr) throw new Error(`Unknown variable "${target.name}" in sheet "${target.sheet}"`);
+          targetAddr = addr;
+        } else {
+          targetAddr = toAddress(target.col, target.row);
+        }
+        // For cross-sheet chains, use that sheet's cells
+        const targetCell = ctx.allSheets[targetIdx].cells.get(targetAddr);
+        if (!targetCell?.chainBody) throw new Error("Chain range target must be a Chain or Markov cell");
+        const startResult = evalExpr(e.start, results, varMap, n, cells, ctx);
+        const endResult = evalExpr(e.end, results, varMap, n, cells, ctx);
+        if (startResult.kind !== "scalar" || endResult.kind !== "scalar")
+          throw new Error("Chain range indices must be scalars");
+        const start = Math.floor(startResult.value);
+        const end = Math.floor(endResult.value);
+        if (start < 0 || end < start) throw new Error("Invalid chain range");
+        const targetResults = ctx.allResults[targetIdx];
+        const targetVarMap = ctx.allVarMaps[targetIdx];
+        const targetCells = ctx.allSheets[targetIdx].cells;
+        for (let s = start; s <= end; s++) {
+          const stepValues = evaluateChainStep(targetCell, targetAddr, s, targetResults, targetVarMap, n, targetCells, ctx);
+          values.push({ kind: "samples", values: stepValues });
+        }
+        continue;
+      } else {
+        throw new Error("Chain range target must be a cell reference or variable");
+      }
+      const targetCell = cells.get(targetAddr);
+      if (!targetCell?.chainBody) throw new Error("Chain range target must be a Chain or Markov cell");
+      const startResult = evalExpr(e.start, results, varMap, n, cells, ctx);
+      const endResult = evalExpr(e.end, results, varMap, n, cells, ctx);
+      if (startResult.kind !== "scalar" || endResult.kind !== "scalar")
+        throw new Error("Chain range indices must be scalars");
+      const start = Math.floor(startResult.value);
+      const end = Math.floor(endResult.value);
+      if (start < 0 || end < start) throw new Error("Invalid chain range");
+      for (let s = start; s <= end; s++) {
+        const stepValues = evaluateChainStep(targetCell, targetAddr, s, results, varMap, n, cells, ctx);
+        values.push({ kind: "samples", values: stepValues });
+      }
+    } else {
+      values.push(evalExpr(e, results, varMap, n, cells, ctx));
+    }
+  }
+
+  return { values, hasRange };
+}
+
+/** Compute a percentile value from a sample array. Percentile is 0-100.
+ *  Interpolates between adjacent samples when the index is fractional. */
+function samplePercentile(values: Float64Array, percentile: number): number {
+  const sorted = Float64Array.from(values).sort();
+  const idx = (percentile / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  if (lo >= sorted.length - 1) return sorted[sorted.length - 1];
+  const frac = idx - lo;
+  return sorted[lo] + frac * (sorted[lo + 1] - sorted[lo]);
+}
+
+/** Elementwise reduce across multiple CellResults */
+function reduceElementwise(
+  vals: CellResult[], fn: (a: number, b: number) => number, n: number,
+): CellResult {
+  if (vals.length === 0) throw new Error("Cannot reduce empty list");
+  if (vals.length === 1) return vals[0];
+  // Check if all scalar
+  if (vals.every(v => v.kind === "scalar")) {
+    let acc = (vals[0] as { kind: "scalar"; value: number }).value;
+    for (let i = 1; i < vals.length; i++) acc = fn(acc, (vals[i] as { kind: "scalar"; value: number }).value);
+    return { kind: "scalar", value: acc };
+  }
+  // At least one is samples — promote all to arrays and reduce
+  let acc = toArray(vals[0], n);
+  for (let v = 1; v < vals.length; v++) {
+    const arr = toArray(vals[v], n);
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) out[i] = fn(acc[i], arr[i]);
+    acc = out;
+  }
+  return { kind: "samples", values: acc };
+}
+
 /** Evaluate a function call */
 function evalFunc(
   name: string,
@@ -775,6 +913,115 @@ function evalFunc(
     return { kind: "samples", values };
   }
 
+  // ─── Aggregate functions (support ranges and arity-based disambiguation) ──
+
+  // Helper for collapse: single distribution → scalar statistic
+  const isCollapseCall = (name: string) =>
+    ["sum", "product", "mean", "median", "geomean", "min", "max"].includes(name);
+
+  if (isCollapseCall(name) || name === "p") {
+    // P() is always collapse — handle separately
+    if (name === "p") {
+      const args = argExprs.map(e => evalExpr(e, results, varMap, n, cells, ctx));
+      if (args.length !== 2) throw new Error("P(dist, percentile) takes 2 arguments");
+      if (args[1].kind !== "scalar") throw new Error("P() percentile must be a scalar");
+      if (args[0].kind === "scalar") return args[0]; // P of scalar = itself
+      return { kind: "scalar", value: samplePercentile(args[0].values, args[1].value) };
+    }
+
+    const { values, hasRange } = expandArgs(argExprs, results, varMap, n, cells, ctx);
+    if (values.length === 0) throw new Error(`${name}() requires at least 1 argument`);
+
+    const isAggregate = hasRange || values.length > 1;
+
+    switch (name) {
+      case "sum":
+        if (!isAggregate) return values[0]; // identity
+        return reduceElementwise(values, (a, b) => a + b, n);
+
+      case "product":
+        if (!isAggregate) return values[0]; // identity
+        return reduceElementwise(values, (a, b) => a * b, n);
+
+      case "mean": {
+        if (!isAggregate && values[0].kind === "samples") {
+          // Collapse: expected value
+          const arr = values[0].values;
+          let s = 0; for (let i = 0; i < arr.length; i++) s += arr[i];
+          return { kind: "scalar", value: s / arr.length };
+        }
+        if (!isAggregate) return values[0]; // scalar identity
+        const sum = reduceElementwise(values, (a, b) => a + b, n);
+        return binOp("/", sum, { kind: "scalar", value: values.length }, n);
+      }
+
+      case "median": {
+        if (!isAggregate && values[0].kind === "samples") {
+          return { kind: "scalar", value: samplePercentile(values[0].values, 50) };
+        }
+        if (!isAggregate) return values[0];
+        // All scalar → scalar median
+        if (values.every(v => v.kind === "scalar")) {
+          const sorted = Float64Array.from(values.map(v => (v as { kind: "scalar"; value: number }).value)).sort();
+          const k = sorted.length;
+          return { kind: "scalar", value: k % 2 ? sorted[k >> 1] : (sorted[(k >> 1) - 1] + sorted[k >> 1]) / 2 };
+        }
+        // Elementwise median across K values
+        const arrays = values.map(v => toArray(v, n));
+        const k = arrays.length;
+        const out = new Float64Array(n);
+        const buf = new Float64Array(k);
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j < k; j++) buf[j] = arrays[j][i];
+          buf.sort();
+          out[i] = k % 2 ? buf[k >> 1] : (buf[(k >> 1) - 1] + buf[k >> 1]) / 2;
+        }
+        return { kind: "samples", values: out };
+      }
+
+      case "geomean": {
+        if (!isAggregate && values[0].kind === "samples") {
+          // Collapse: geometric mean of samples
+          const arr = values[0].values;
+          let logSum = 0; for (let i = 0; i < arr.length; i++) logSum += Math.log(arr[i]);
+          return { kind: "scalar", value: Math.exp(logSum / arr.length) };
+        }
+        if (!isAggregate) return values[0];
+        // Elementwise geometric mean: exp(mean(log(values)))
+        const logSum = reduceElementwise(
+          values.map(v => applyElementwise([v], Math.log, n)),
+          (a, b) => a + b, n,
+        );
+        const logMean = binOp("/", logSum, { kind: "scalar", value: values.length }, n);
+        return applyElementwise([logMean], Math.exp, n);
+      }
+
+      case "min": {
+        if (!isAggregate && values[0].kind === "samples") {
+          // Collapse: sample minimum
+          const arr = values[0].values;
+          let m = arr[0]; for (let i = 1; i < arr.length; i++) if (arr[i] < m) m = arr[i];
+          return { kind: "scalar", value: m };
+        }
+        if (!isAggregate) return values[0];
+        return reduceElementwise(values, Math.min, n);
+      }
+
+      case "max": {
+        if (!isAggregate && values[0].kind === "samples") {
+          // Collapse: sample maximum
+          const arr = values[0].values;
+          let m = arr[0]; for (let i = 1; i < arr.length; i++) if (arr[i] > m) m = arr[i];
+          return { kind: "scalar", value: m };
+        }
+        if (!isAggregate) return values[0];
+        return reduceElementwise(values, Math.max, n);
+      }
+    }
+  }
+
+  // ─── Regular functions (no range support) ─────────────────────────────
+
   const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells, ctx));
 
   switch (name) {
@@ -809,12 +1056,6 @@ function evalFunc(
     case "pow":
       if (args.length !== 2) throw new Error("pow(x, y) takes 2 arguments");
       return applyElementwise(args, Math.pow, n);
-    case "min":
-      if (args.length !== 2) throw new Error("min(x, y) takes 2 arguments");
-      return applyElementwise(args, Math.min, n);
-    case "max":
-      if (args.length !== 2) throw new Error("max(x, y) takes 2 arguments");
-      return applyElementwise(args, Math.max, n);
 
     // Clamping
     case "clamp":
@@ -1599,6 +1840,9 @@ function hasInlineDistribution(expr: Expr): boolean {
       return expr.args.some(hasInlineDistribution);
     case "markov":
       return false; // Markov emissions come from external cells, not inline
+    case "cellRange":
+    case "chainRange":
+      return false;
   }
 }
 
@@ -1783,6 +2027,9 @@ function collectInlineDistLabels(expr: Expr): string[] {
         break;
       case "markov":
         break; // Markov emissions come from external cells
+      case "cellRange":
+      case "chainRange":
+        break;
     }
   }
   walk(expr);

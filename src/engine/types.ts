@@ -24,7 +24,9 @@ export type Expr =
   | { type: "binOp"; op: "+" | "-" | "*" | "/" | "==" | "!=" | ">" | "<" | ">=" | "<="; left: Expr; right: Expr }
   | { type: "unaryMinus"; operand: Expr }
   | { type: "funcCall"; name: string; args: Expr[] }
-  | { type: "markov"; states: MarkovStateDef[]; init: MarkovInit };
+  | { type: "markov"; states: MarkovStateDef[]; init: MarkovInit }
+  | { type: "cellRange"; startCol: number; startRow: number; endCol: number; endRow: number }
+  | { type: "chainRange"; target: Expr; start: Expr; end: Expr };
 
 /** A state definition in a Markov() expression */
 export interface MarkovStateDef {

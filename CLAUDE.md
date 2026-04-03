@@ -61,7 +61,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] MC engine: sample arrays propagated through the DAG; scalars stay scalar until mixed with a distribution
 - [x] Cell display: show mean for scalars, show mean ± spread indicator for distributions
 - [x] Detail panel: click a cell to see its full empirical distribution as a histogram
-- [x] Built-in functions: abs, sqrt, exp, log, pow, min, max, floor, ceil, round, clamp, if
+- [x] Built-in functions: abs, sqrt, exp, log, pow, min, max, floor, ceil, round, clamp, if, sum, product, mean, median, geomean, P
 - [x] Distribution constructors usable in formulas (e.g. `= Normal(100, 10) * 12`)
 - [x] Incremental recalculation (only dirty cells and dependents)
 - [x] Histogram hover showing per-bin percentage
@@ -111,7 +111,9 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Undo/redo
   - [ ] Undo tree?
 - [ ] Cell formatting (labels, number formats)
-- [ ] Functions on ranges: SUM, MEAN, etc.
+- [x] Functions on ranges: sum, product, mean, median, geomean, min, max, P
+  - Cell ranges (`A1:A10`), chain step ranges (`income[0:11]`, `income[:11]`), bracket index (`income[5]`)
+  - Arity-based disambiguation: multiple values → elementwise aggregate; single distribution → scalar collapse
 - [x] Range fill: drag fill handle to copy cell with shifted references
 - [x] $ pinning in cell references ($A1, A$1, $A$1)
 - [ ] Resizable grid
@@ -130,6 +132,11 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
 - [ ] Highlight the row and column labels of the active cell
 - [ ] Autosave (only after undo, and with option to disable)
+- [ ] Data export (ie. the sample arrays)
+
+### Questions to check out
+
+- [ ] How much are we calling sort() on sample arrays? Should we be storing samples always sorted?
 
 ## Design Principles
 

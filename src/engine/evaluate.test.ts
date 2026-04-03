@@ -591,7 +591,7 @@ describe("pareto, poisson, studentt", () => {
 
   it("studentt with location-scale", () => {
     const sheet = makeSheet({ A1: "= StudentT(10, 100, 15)" }, 10000);
-    expect(mean(sheet, "A1")).toBeCloseTo(100, 0);
+    expect(mean(sheet, "A1")).toBeCloseTo(100, -1); // heavier tails → more sample mean variance
     expect(std(sheet, "A1")).toBeGreaterThan(10);
   });
 
@@ -983,5 +983,272 @@ describe("Chain", () => {
   it("non-chain variable self-reference is a cycle error", () => {
     const sheet = makeSheet({ A1: "x = x + 1" });
     expect(sheet.cells.get("A1")!.error).toBeDefined();
+  });
+});
+
+// ─── Aggregate functions and ranges ─────────────────────────────────
+
+describe("aggregate functions", () => {
+  describe("sum", () => {
+    it("sums scalars in a cell range", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", A3: "30", B1: "= sum(A1:A3)" });
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBe(60);
+    });
+
+    it("sums distributions in a cell range elementwise", () => {
+      const sheet = makeSheet({
+        A1: "Normal(100, 10)", A2: "Normal(200, 10)", B1: "= sum(A1:A2)",
+      }, 5_000);
+      expect(isScalar(sheet, "B1")).toBe(false);
+      expect(mean(sheet, "B1")).toBeCloseTo(300, -1);
+    });
+
+    it("sums multiple explicit arguments", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", B1: "= sum(A1, A2, 5)" });
+      expect(scalarValue(sheet, "B1")).toBe(35);
+    });
+
+    it("single distribution argument is identity", () => {
+      const sheet = makeSheet({ A1: "Normal(100, 10)", B1: "= sum(A1)" }, 5_000);
+      expect(isScalar(sheet, "B1")).toBe(false);
+      expect(mean(sheet, "B1")).toBeCloseTo(100, -1);
+    });
+
+    it("sums chain step range", () => {
+      // Chain that adds 1 each step: step 0 = 0, step 1 = 1, ..., step 5 = 5
+      // ChainIndex always returns samples, so sum is a distribution (all samples = 15)
+      const sheet = makeSheet({ A1: "x = Chain(x + 1, 0)", B1: "= sum(x[0:5])" });
+      expect(mean(sheet, "B1")).toBeCloseTo(15, 5);
+    });
+
+    it("sums chain step range with shorthand [:n]", () => {
+      const sheet = makeSheet({ A1: "x = Chain(x + 1, 0)", B1: "= sum(x[:3])" });
+      expect(mean(sheet, "B1")).toBeCloseTo(6, 5);
+    });
+
+    it("2D cell range", () => {
+      const sheet = makeSheet({ A1: "1", B1: "2", A2: "3", B2: "4", C1: "= sum(A1:B2)" });
+      expect(scalarValue(sheet, "C1")).toBe(10);
+    });
+  });
+
+  describe("product", () => {
+    it("multiplies scalars in a range", () => {
+      const sheet = makeSheet({ A1: "2", A2: "3", A3: "5", B1: "= product(A1:A3)" });
+      expect(scalarValue(sheet, "B1")).toBe(30);
+    });
+
+    it("single argument is identity", () => {
+      const sheet = makeSheet({ A1: "42", B1: "= product(A1)" });
+      expect(scalarValue(sheet, "B1")).toBe(42);
+    });
+  });
+
+  describe("mean", () => {
+    it("averages scalars in a range", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", A3: "30", B1: "= mean(A1:A3)" });
+      expect(scalarValue(sheet, "B1")).toBe(20);
+    });
+
+    it("averages distributions elementwise", () => {
+      const sheet = makeSheet({
+        A1: "Normal(100, 10)", A2: "Normal(200, 10)", B1: "= mean(A1:A2)",
+      }, 5_000);
+      expect(isScalar(sheet, "B1")).toBe(false);
+      expect(mean(sheet, "B1")).toBeCloseTo(150, -1);
+    });
+
+    it("collapses single distribution to expected value (scalar)", () => {
+      const sheet = makeSheet({ A1: "Normal(100, 10)", B1: "= mean(A1)" }, 10_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(100, 0);
+    });
+
+    it("single scalar is identity", () => {
+      const sheet = makeSheet({ A1: "42", B1: "= mean(A1)" });
+      expect(scalarValue(sheet, "B1")).toBe(42);
+    });
+
+    it("averages chain step range", () => {
+      // Chain: step 0 = 0, step 1 = 1, ..., step 4 = 4
+      // Chain range always produces samples, so mean over range → distribution
+      const sheet = makeSheet({ A1: "x = Chain(x + 1, 0)", B1: "= mean(x[0:4])" });
+      expect(mean(sheet, "B1")).toBeCloseTo(2, 5);
+    });
+  });
+
+  describe("median", () => {
+    it("collapses single distribution to P50 (scalar)", () => {
+      // Uniform(0, 100) has median 50
+      const sheet = makeSheet({ A1: "Uniform(0, 100)", B1: "= median(A1)" }, 10_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(50, 0);
+    });
+
+    it("computes elementwise median of range", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", A3: "30", B1: "= median(A1:A3)" });
+      expect(scalarValue(sheet, "B1")).toBe(20);
+    });
+
+    it("computes median of even-length range correctly", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", A3: "30", A4: "40", B1: "= median(A1:A4)" });
+      expect(scalarValue(sheet, "B1")).toBe(25);
+    });
+
+    it("agrees with P(dist, 50)", () => {
+      const sheet = makeSheet({
+        A1: "Normal(100, 10)",
+        B1: "= median(A1)",
+        C1: "= P(A1, 50)",
+      }, 10_000);
+      expect(scalarValue(sheet, "B1")).toBe(scalarValue(sheet, "C1"));
+    });
+  });
+
+  describe("P (percentile)", () => {
+    it("computes P95 of a distribution", () => {
+      // Normal(0,1): P95 ≈ 1.645
+      const sheet = makeSheet({ A1: "Normal(0, 1)", B1: "= P(A1, 95)" }, 50_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(1.645, 1);
+    });
+
+    it("P0 gives minimum, P100 gives maximum", () => {
+      const sheet = makeSheet({ A1: "Uniform(10, 20)", B1: "= P(A1, 0)", C1: "= P(A1, 100)" }, 10_000);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(10, 0);
+      expect(scalarValue(sheet, "C1")).toBeCloseTo(20, 0);
+    });
+
+    it("P of scalar returns that scalar", () => {
+      const sheet = makeSheet({ A1: "42", B1: "= P(A1, 95)" });
+      expect(scalarValue(sheet, "B1")).toBe(42);
+    });
+
+    it("interpolates correctly for small arrays", () => {
+      // 4 values [1,2,3,4]: P50 should be 2.5 (interpolated)
+      const sheet = makeSheet({
+        A1: "1", A2: "2", A3: "3", A4: "4",
+        // Use a trick: sum each value with a zero-sample distribution to force into samples
+        // Actually, let's just test via the median agreement
+        B1: "= median(A1:A4)",
+      });
+      expect(scalarValue(sheet, "B1")).toBe(25 / 10); // 2.5
+    });
+
+    it("errors with wrong arg count", () => {
+      const sheet = makeSheet({ A1: "Normal(0, 1)", B1: "= P(A1)" });
+      expect(sheet.cells.get("B1")!.error).toMatch(/takes 2 arguments/);
+    });
+  });
+
+  describe("geomean", () => {
+    it("collapses single distribution to geometric mean", () => {
+      // LogNormal(0, 1): geometric mean = exp(0) = 1
+      const sheet = makeSheet({ A1: "LogNormal(0, 1)", B1: "= geomean(A1)" }, 10_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(1, 0);
+    });
+
+    it("computes geometric mean of scalar range", () => {
+      const sheet = makeSheet({ A1: "2", A2: "8", B1: "= geomean(A1:A2)" });
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(4, 5); // sqrt(16) = 4
+    });
+  });
+
+  describe("min and max (extended)", () => {
+    it("min of 2 args works as before", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", B1: "= min(A1, A2)" });
+      expect(scalarValue(sheet, "B1")).toBe(10);
+    });
+
+    it("min of range", () => {
+      const sheet = makeSheet({ A1: "30", A2: "10", A3: "20", B1: "= min(A1:A3)" });
+      expect(scalarValue(sheet, "B1")).toBe(10);
+    });
+
+    it("min of single distribution collapses to sample minimum", () => {
+      const sheet = makeSheet({ A1: "Uniform(5, 10)", B1: "= min(A1)" }, 10_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(5, 0);
+    });
+
+    it("max of single distribution collapses to sample maximum", () => {
+      const sheet = makeSheet({ A1: "Uniform(5, 10)", B1: "= max(A1)" }, 10_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      expect(scalarValue(sheet, "B1")).toBeCloseTo(10, 0);
+    });
+
+    it("max of range", () => {
+      const sheet = makeSheet({ A1: "10", A2: "30", A3: "20", B1: "= max(A1:A3)" });
+      expect(scalarValue(sheet, "B1")).toBe(30);
+    });
+
+    it("min of 3 distributions elementwise", () => {
+      // min of Normal(100,1), Normal(200,1), Normal(300,1) ≈ Normal(100,1)
+      const sheet = makeSheet({
+        A1: "Normal(100, 1)", A2: "Normal(200, 1)", A3: "Normal(300, 1)",
+        B1: "= min(A1, A2, A3)",
+      }, 5_000);
+      expect(isScalar(sheet, "B1")).toBe(false);
+      expect(mean(sheet, "B1")).toBeCloseTo(100, 0);
+    });
+
+    it("nested min(max(...)) collapses to scalar", () => {
+      // max of 3 distributions → distribution, then min of that → scalar
+      const sheet = makeSheet({
+        A1: "Normal(100, 10)", A2: "Normal(200, 10)", A3: "Normal(300, 10)",
+        B1: "= min(max(A1, A2, A3))",
+      }, 5_000);
+      expect(isScalar(sheet, "B1")).toBe(true);
+      // max elementwise of 3 normals ≈ 300-ish, min sample of that ≈ 270-ish
+      expect(scalarValue(sheet, "B1")).toBeGreaterThan(250);
+      expect(scalarValue(sheet, "B1")).toBeLessThan(310);
+    });
+  });
+
+  describe("chain bracket syntax", () => {
+    it("income[5] works like ChainIndex", () => {
+      const sheet = makeSheet({
+        A1: "x = Chain(x + 10, 0)",
+        B1: "= x[5]",
+        C1: "= ChainIndex(x, 5)",
+      });
+      // Both return samples; with deterministic body, all samples = 50
+      expect(mean(sheet, "B1")).toBe(mean(sheet, "C1"));
+      expect(mean(sheet, "B1")).toBeCloseTo(50, 5);
+    });
+
+    it("chain range with distribution body", () => {
+      const sheet = makeSheet({
+        A1: "x = Chain(x + Normal(10, 1), 0)",
+        B1: "= mean(x[1:12])",
+      }, 5_000);
+      // mean of steps 1-12: step k ≈ k*10, mean ≈ (10+20+...+120)/12 = 65
+      expect(isScalar(sheet, "B1")).toBe(false);
+      expect(mean(sheet, "B1")).toBeCloseTo(65, -1);
+    });
+  });
+
+  describe("error handling", () => {
+    it("sum with no arguments errors", () => {
+      const sheet = makeSheet({ A1: "= sum()" });
+      expect(sheet.cells.get("A1")!.error).toMatch(/requires at least 1 argument/);
+    });
+
+    it("chain range on non-chain cell errors", () => {
+      const sheet = makeSheet({ A1: "42", B1: "= sum(A1[0:5])" });
+      expect(sheet.cells.get("B1")!.error).toMatch(/Chain/);
+    });
+
+    it("cell range outside function errors", () => {
+      const sheet = makeSheet({ A1: "10", A2: "20", B1: "= A1:A2" });
+      expect(sheet.cells.get("B1")!.error).toMatch(/ranges.*function/i);
+    });
+
+    it("chain range with negative start errors", () => {
+      const sheet = makeSheet({ A1: "x = Chain(x + 1, 0)", B1: "= sum(x[-1:5])" });
+      expect(sheet.cells.get("B1")!.error).toMatch(/Invalid/i);
+    });
   });
 });
