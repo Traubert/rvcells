@@ -52,6 +52,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
+  const selectedParsed = selectedAddr ? parseAddress(selectedAddr) : null;
   const [editingAddr, setEditingAddrRaw] = useState<CellAddress | null>(null);
   const [editingInBar, setEditingInBar] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -597,7 +598,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
             <tr>
               <th className="row-header"></th>
               {Array.from({ length: NUM_COLS }, (_, c) => (
-                <th key={c} className="col-header">
+                <th key={c} className={`col-header${selectedParsed?.col === c ? " header-active" : ""}`}>
                   {colLabel(c)}
                 </th>
               ))}
@@ -606,7 +607,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
           <tbody>
             {Array.from({ length: NUM_ROWS }, (_, r) => (
               <tr key={r}>
-                <td className="row-header">{r + 1}</td>
+                <td className={`row-header${selectedParsed?.row === r ? " header-active" : ""}`}>{r + 1}</td>
                 {Array.from({ length: NUM_COLS }, (_, c) => {
                   const addr = toAddress(c, r);
                   const cell = sheet.cells.get(addr);

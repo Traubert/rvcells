@@ -895,6 +895,11 @@ thead .row-header {
   z-index: 3;
 }
 
+.header-active {
+  background: var(--header-active, #d0d7e2) !important;
+  font-weight: 600;
+}
+
 .cell {
   cursor: cell;
   color: var(--text);
