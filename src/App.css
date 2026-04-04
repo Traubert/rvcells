@@ -697,6 +697,18 @@
   color: var(--text-dim);
 }
 
+.about-actions {
+  margin-top: 14px;
+  margin-bottom: 12px;
+  justify-content: center;
+  gap: 8px;
+}
+
+.splash-changelog-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
 .splash-text {
   font-family: var(--font-ui);
   font-size: 13px;

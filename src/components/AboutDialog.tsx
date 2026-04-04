@@ -2,9 +2,11 @@ import faviconUrl from "/favicon.svg";
 
 interface AboutDialogProps {
   onClose: () => void;
+  onShowWelcome: () => void;
+  onShowChangelog: () => void;
 }
 
-export function AboutDialog({ onClose }: AboutDialogProps) {
+export function AboutDialog({ onClose, onShowWelcome, onShowChangelog }: AboutDialogProps) {
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog about-dialog" onClick={(e) => e.stopPropagation()}>
@@ -23,8 +25,12 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
           This program is free software: you can redistribute it and/or modify
           it under the terms of the GPL. See LICENSE in the source distribution.
         </p>
+        <div className="dialog-actions about-actions">
+          <button className="dialog-button" onClick={onShowWelcome}>Welcome screen</button>
+          <button className="dialog-button" onClick={onShowChangelog}>Changelog</button>
+        </div>
         <div className="dialog-actions">
-          <button className="dialog-button" onClick={onClose}>Close</button>
+          <button className="dialog-button splash-dismiss" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>

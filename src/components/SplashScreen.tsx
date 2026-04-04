@@ -5,7 +5,7 @@ import type { ChangelogEntry } from "../changelog";
 import faviconUrl from "/favicon.svg";
 
 interface SplashScreenProps {
-  mode: "welcome" | "whats-new";
+  mode: "welcome" | "whats-new" | "changelog";
   newEntries: ChangelogEntry[];
   onDismiss: () => void;
   onLoadExample: (data: FileFormat) => void;
@@ -64,10 +64,12 @@ export function SplashScreen({ mode, newEntries, onDismiss, onLoadExample }: Spl
           <>
             <div className="splash-hero">
               <img src={faviconUrl} className="splash-logo" alt="" />
-              <h2 className="splash-title">Welcome back</h2>
+              <h2 className="splash-title">{mode === "changelog" ? "Full changelog" : "Welcome back"}</h2>
             </div>
-            <p className="splash-text">Here's what's new since your last visit:</p>
-            <ul className="splash-changelog">
+            {mode === "whats-new" && (
+              <p className="splash-text">Here's what's new since your last visit:</p>
+            )}
+            <ul className={`splash-changelog${mode === "changelog" ? " splash-changelog-scroll" : ""}`}>
               {newEntries.map((entry) => (
                 <li key={entry.version}>{entry.summary}</li>
               ))}

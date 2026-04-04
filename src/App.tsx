@@ -47,7 +47,7 @@ export default function App() {
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const [splash, setSplash] = useState<{ mode: "welcome" | "whats-new"; newEntries: ChangelogEntry[] } | null>(() => {
+  const [splash, setSplash] = useState<{ mode: "welcome" | "whats-new" | "changelog"; newEntries: ChangelogEntry[] } | null>(() => {
     const last = getLastSeenVersion();
     if (last === null) return { mode: "welcome", newEntries: [] };
     if (last < CURRENT_VERSION) return { mode: "whats-new", newEntries: changelog.filter((e) => e.version > last) };
@@ -371,7 +371,11 @@ export default function App() {
         <HelpDialog onClose={() => setHelpOpen(false)} onLoadExample={handleLoadExample} />
       )}
       {aboutOpen && (
-        <AboutDialog onClose={() => setAboutOpen(false)} />
+        <AboutDialog
+          onClose={() => setAboutOpen(false)}
+          onShowWelcome={() => setSplash({ mode: "welcome", newEntries: [] })}
+          onShowChangelog={() => setSplash({ mode: "changelog", newEntries: changelog })}
+        />
       )}
       {settingsOpen && (
         <SettingsDialog
