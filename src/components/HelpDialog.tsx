@@ -133,13 +133,12 @@ export function HelpDialog({ onClose, onLoadExample }: HelpDialogProps) {
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
       if (e.key === "ArrowLeft") prev();
       if (e.key === "ArrowRight") next();
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, []);
 
   const pageTitle = page < PAGES.length ? PAGES[page].title : "Examples";
 

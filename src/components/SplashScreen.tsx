@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { examples } from "../examples";
 import type { FileFormat } from "../engine/file";
 import type { ChangelogEntry } from "../changelog";
@@ -12,14 +11,6 @@ interface SplashScreenProps {
 }
 
 export function SplashScreen({ mode, newEntries, onDismiss, onLoadExample }: SplashScreenProps) {
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape" || e.key === "Enter") onDismiss();
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onDismiss]);
-
   return (
     <div className="dialog-overlay" onClick={onDismiss}>
       <div className="dialog splash-dialog" onClick={(e) => e.stopPropagation()}>
@@ -39,7 +30,9 @@ export function SplashScreen({ mode, newEntries, onDismiss, onLoadExample }: Spl
               <ul className="splash-list">
                 <li><strong>Variables</strong> &mdash; name any cell: <code>income = Normal(5000, 800)</code></li>
                 <li><strong>Label assignment</strong> &mdash; type a label in column A, then <code>:=</code> in column B to auto-name it</li>
-                <li><strong>Chain loops</strong> &mdash; <code>x = Chain(x * growth, 1000)</code> runs an iterative process in one cell</li>
+                <li><strong>Detail panel</strong> &mdash; click a distribution cell to see histograms, sensitivity analysis, and scenario comparisons</li>
+                <li><strong>Chain</strong> &mdash; <code>x = Chain(x * growth, 1000)</code> runs an iterative process in one cell, and see timeline analysis in the detail view</li>
+                <li><strong>Markov</strong> &mdash; <code>Markov(sunny: 0.9 -&gt; sunny, 0.1 -&gt; rainy; ...)</code> defines state-transition models</li>
               </ul>
             </section>
             <section className="splash-section">

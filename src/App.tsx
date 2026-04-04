@@ -198,6 +198,50 @@ export default function App() {
     setSplash(null);
   }, []);
 
+  // Global keyboard shortcuts (work regardless of focus)
+  // Escape dismisses the topmost dialog in render order.
+  const escapeStackRef = useRef<(() => void)[]>([]);
+  useEffect(() => {
+    const stack: (() => void)[] = [];
+    if (settingsOpen) stack.push(() => setSettingsOpen(false));
+    if (openDialogOpen) stack.push(() => setOpenDialogOpen(false));
+    if (aboutOpen) stack.push(() => setAboutOpen(false));
+    if (splash) stack.push(handleDismissSplash);
+    if (helpOpen) stack.push(() => setHelpOpen(false));
+    escapeStackRef.current = stack;
+  });
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        const stack = escapeStackRef.current;
+        if (stack.length > 0) {
+          e.preventDefault();
+          stack[stack.length - 1]();
+          return;
+        }
+      }
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) return;
+      switch (e.key.toLowerCase()) {
+        case "h":
+          e.preventDefault();
+          setHelpOpen(true);
+          break;
+        case "s":
+          e.preventDefault();
+          handleStorageSave();
+          break;
+        case "o":
+          e.preventDefault();
+          handleStorageOpen();
+          break;
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [handleStorageSave, handleStorageOpen, handleDismissSplash]);
+
   // Mass export all saved workbooks as zip
   const handleMassExport = useCallback(async () => {
     setMenuOpen(false);
@@ -367,9 +411,6 @@ export default function App() {
         onSave={handleStorageSave}
         onOpen={handleStorageOpen}
       />
-      {helpOpen && (
-        <HelpDialog onClose={() => setHelpOpen(false)} onLoadExample={handleLoadExample} />
-      )}
       {aboutOpen && (
         <AboutDialog
           onClose={() => setAboutOpen(false)}
@@ -410,6 +451,9 @@ export default function App() {
           onDismiss={handleDismissSplash}
           onLoadExample={handleLoadExample}
         />
+      )}
+      {helpOpen && (
+        <HelpDialog onClose={() => setHelpOpen(false)} onLoadExample={handleLoadExample} />
       )}
     </div>
   );
