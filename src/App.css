@@ -341,6 +341,10 @@
   outline: none;
 }
 
+.tab-drag-over {
+  border-left: 2px solid var(--accent);
+}
+
 .tab-close {
   font-size: 14px;
   line-height: 1;

@@ -425,6 +425,23 @@ export default function App() {
     }
   }, [doDeleteSheet]);
 
+  const handleTabReorder = useCallback((fromIndex: number, toIndex: number) => {
+    const sheets = sheetsRef.current;
+    const [moved] = sheets.splice(fromIndex, 1);
+    sheets.splice(toIndex, 0, moved);
+    // Keep the active sheet the same after reorder
+    let newActive = activeIndexRef.current;
+    if (newActive === fromIndex) {
+      newActive = toIndex;
+    } else if (fromIndex < newActive && toIndex >= newActive) {
+      newActive--;
+    } else if (fromIndex > newActive && toIndex <= newActive) {
+      newActive++;
+    }
+    setActiveIdx(newActive);
+    commitChange();
+  }, [commitChange, setActiveIdx]);
+
   const handleTabAdd = useCallback(() => {
     const name = nextUntitledName(sheetsRef.current);
     const numSamples = sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES;
@@ -506,6 +523,7 @@ export default function App() {
         onRename={handleTabRename}
         onClose={handleTabClose}
         onAdd={handleTabAdd}
+        onReorder={handleTabReorder}
       />
       <Grid
         sheet={activeSheet}

@@ -7,12 +7,15 @@ interface TabBarProps {
   onRename: (index: number, name: string) => void;
   onClose: (index: number) => void;
   onAdd: () => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
 }
 
-export function TabBar({ sheets, activeIndex, onSelect, onRename, onClose, onAdd }: TabBarProps) {
+export function TabBar({ sheets, activeIndex, onSelect, onRename, onClose, onAdd, onReorder }: TabBarProps) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const dragIndexRef = useRef<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
 
   useEffect(() => {
     if (editingIndex !== null) {
@@ -36,13 +39,46 @@ export function TabBar({ sheets, activeIndex, onSelect, onRename, onClose, onAdd
     }
   }, [editingIndex, editValue, sheets, onRename]);
 
+  // Scroll wheel cycles through tabs (wrapping)
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const n = sheets.length;
+    if (n <= 1) return;
+    const dir = e.deltaY > 0 ? 1 : -1;
+    onSelect((activeIndex + dir + n) % n);
+  }, [sheets.length, activeIndex, onSelect]);
+
   return (
-    <div className="tab-bar">
+    <div className="tab-bar" onWheel={handleWheel}>
       {sheets.map((sheet, i) => (
         <div
           key={i}
-          className={`tab ${i === activeIndex ? "tab-active" : ""}`}
+          className={`tab ${i === activeIndex ? "tab-active" : ""}${dragOver === i && dragIndexRef.current !== i ? " tab-drag-over" : ""}`}
           onClick={() => { if (editingIndex === null) onSelect(i); }}
+          draggable={editingIndex === null}
+          onDragStart={(e) => {
+            dragIndexRef.current = i;
+            e.dataTransfer.effectAllowed = "move";
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOver(i);
+          }}
+          onDragLeave={() => setDragOver((prev) => prev === i ? null : prev)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(null);
+            const from = dragIndexRef.current;
+            if (from !== null && from !== i) {
+              onReorder(from, i);
+            }
+            dragIndexRef.current = null;
+          }}
+          onDragEnd={() => {
+            dragIndexRef.current = null;
+            setDragOver(null);
+          }}
         >
           {editingIndex === i ? (
             <input
@@ -57,6 +93,7 @@ export function TabBar({ sheets, activeIndex, onSelect, onRename, onClose, onAdd
               }}
               onClick={(e) => e.stopPropagation()}
               spellCheck={false}
+              draggable={false}
             />
           ) : (
             <span
@@ -78,6 +115,7 @@ export function TabBar({ sheets, activeIndex, onSelect, onRename, onClose, onAdd
                 onClose(i);
               }}
               title="Close sheet"
+              draggable={false}
             >
               ×
             </button>
