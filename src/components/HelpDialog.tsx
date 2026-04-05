@@ -8,28 +8,6 @@ const PAGES = [
     content: (
       <>
         <section>
-          <h3>Keyboard</h3>
-          <table className="help-table">
-            <tbody>
-              <tr><td>Type any character</td><td>Start editing cell</td></tr>
-              <tr><td>Enter / F2</td><td>Edit existing content</td></tr>
-              <tr><td>Delete / Backspace</td><td>Clear cell(s)</td></tr>
-              <tr><td>Escape</td><td>Cancel edit / deselect</td></tr>
-              <tr><td>Arrow / PgUp / PgDn keys</td><td>Navigate</td></tr>
-              <tr><td>Shift + Arrow</td><td>Extend selection</td></tr>
-              <tr><td>Tab</td><td>Commit &amp; move right</td></tr>
-              <tr><td>Ctrl+C / Ctrl+X</td><td>Copy / cut</td></tr>
-              <tr><td>Ctrl+Shift+C / X</td><td>Copy / cut resolved values</td></tr>
-              <tr><td>Ctrl+V</td><td>Paste</td></tr>
-              <tr><td>Ctrl+R</td><td>Recalculate cell &amp; dependents</td></tr>
-              <tr><td>Ctrl+Shift+R</td><td>Recalculate all sheets</td></tr>
-              <tr><td>Ctrl+S</td><td>Save to browser storage</td></tr>
-              <tr><td>Ctrl+O</td><td>Open from browser storage</td></tr>
-              <tr><td>Ctrl+H</td><td>This help screen</td></tr>
-            </tbody>
-          </table>
-        </section>
-        <section>
           <h3>Cell syntax</h3>
           <table className="help-table">
             <tbody>
@@ -112,6 +90,59 @@ const PAGES = [
             </tbody>
           </table>
           <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Use <code>_t</code> inside the body for the current step number.</p>
+        </section>
+      </>
+    ),
+  },
+  {
+    title: "Keyboard",
+    content: (
+      <>
+        <section>
+          <h3>Editing</h3>
+          <table className="help-table">
+            <tbody>
+              <tr><td>Type any character</td><td>Start editing cell</td></tr>
+              <tr><td>Enter / F2</td><td>Edit existing content</td></tr>
+              <tr><td>Delete / Backspace</td><td>Clear cell(s)</td></tr>
+              <tr><td>Escape</td><td>Cancel edit / deselect</td></tr>
+              <tr><td>Tab</td><td>Commit &amp; move right</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <h3>Navigation</h3>
+          <table className="help-table">
+            <tbody>
+              <tr><td>Arrow keys</td><td>Move selection</td></tr>
+              <tr><td>PgUp / PgDn</td><td>Jump up / down</td></tr>
+              <tr><td>Shift + Arrow</td><td>Extend selection</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <h3>Clipboard &amp; undo</h3>
+          <table className="help-table">
+            <tbody>
+              <tr><td>Ctrl+C / Ctrl+X</td><td>Copy / cut</td></tr>
+              <tr><td>Ctrl+Shift+C / X</td><td>Copy / cut resolved values</td></tr>
+              <tr><td>Ctrl+V</td><td>Paste</td></tr>
+              <tr><td>Ctrl+Z</td><td>Undo</td></tr>
+              <tr><td>Ctrl+Y / Ctrl+Shift+Z</td><td>Redo</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <h3>Global</h3>
+          <table className="help-table">
+            <tbody>
+              <tr><td>Ctrl+R</td><td>Recalculate cell &amp; dependents</td></tr>
+              <tr><td>Ctrl+Shift+R</td><td>Recalculate all sheets</td></tr>
+              <tr><td>Ctrl+S</td><td>Save to browser storage</td></tr>
+              <tr><td>Ctrl+O</td><td>Open from browser storage</td></tr>
+              <tr><td>Ctrl+H</td><td>This help screen</td></tr>
+            </tbody>
+          </table>
         </section>
       </>
     ),

@@ -18,6 +18,15 @@ import type { ChangelogEntry } from "./changelog";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "./constants";
 import "./App.css";
 
+type Snapshot = {
+  name: string;
+  numSamples: number;
+  activeIndex: number;
+  sheets: Array<{ name: string; cells: Record<string, string> }>;
+};
+
+const MAX_HISTORY = 100;
+
 function nextUntitledName(sheets: Sheet[]): string {
   const names = new Set(sheets.map((s) => s.name));
   if (!names.has(DEFAULT_SHEET_NAME)) return DEFAULT_SHEET_NAME;
@@ -56,6 +65,88 @@ export default function App() {
 
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
+  // Undo/redo history
+  const activeIndexRef = useRef(0);
+  const historyRef = useRef<Snapshot[]>([]);
+  const historyHeadRef = useRef(-1);
+
+  const setActiveIdx = useCallback((idx: number) => {
+    activeIndexRef.current = idx;
+    setActiveIndex(idx);
+  }, []);
+
+  // These plain functions only access stable refs, so they work correctly
+  // even when captured in useCallback closures.
+  function takeSnapshot(): Snapshot {
+    return {
+      name: nameRef.current,
+      numSamples: sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES,
+      activeIndex: activeIndexRef.current,
+      sheets: sheetsRef.current.map((sheet) => {
+        const cells: Record<string, string> = {};
+        for (const [addr, cell] of sheet.cells) cells[addr] = cell.raw;
+        return { name: sheet.name, cells };
+      }),
+    };
+  }
+
+  function pushSnapshot() {
+    const snap = takeSnapshot();
+    const head = historyHeadRef.current;
+    if (head >= 0) {
+      const prev = historyRef.current[head];
+      if (JSON.stringify(snap) === JSON.stringify(prev)) return;
+    }
+    historyRef.current.splice(head + 1);
+    historyRef.current.push(snap);
+    if (historyRef.current.length > MAX_HISTORY) historyRef.current.shift();
+    historyHeadRef.current = historyRef.current.length - 1;
+  }
+
+  function resetHistory() {
+    historyRef.current = [takeSnapshot()];
+    historyHeadRef.current = 0;
+  }
+
+  const restoreSnapshot = useCallback((snap: Snapshot) => {
+    const fileFormat: FileFormat = {
+      version: 2,
+      name: snap.name,
+      settings: { numSamples: snap.numSamples },
+      sheets: snap.sheets,
+    };
+    const result = deserializeFile(fileFormat);
+    sheetsRef.current = result.sheets;
+    nameRef.current = result.name;
+    activeIndexRef.current = snap.activeIndex;
+    setActiveIndex(snap.activeIndex);
+    bump();
+  }, [bump]);
+
+  const undo = useCallback(() => {
+    if (historyHeadRef.current > 0) {
+      historyHeadRef.current--;
+      restoreSnapshot(historyRef.current[historyHeadRef.current]);
+    }
+  }, [restoreSnapshot]);
+
+  const redo = useCallback(() => {
+    if (historyHeadRef.current < historyRef.current.length - 1) {
+      historyHeadRef.current++;
+      restoreSnapshot(historyRef.current[historyHeadRef.current]);
+    }
+  }, [restoreSnapshot]);
+
+  const commitChange = useCallback(() => {
+    pushSnapshot();
+    bump();
+  }, [bump]);
+
+  // Initialize undo history on mount
+  useEffect(() => {
+    resetHistory();
+  }, []);
+
   // Check storage availability on mount
   useEffect(() => {
     const check = storageAvailable();
@@ -76,14 +167,14 @@ export default function App() {
     const trimmed = editNameValue.trim();
     if (trimmed && trimmed !== nameRef.current) {
       nameRef.current = trimmed;
-      bump();
+      commitChange();
     }
     setEditingName(false);
-  }, [editNameValue, bump]);
+  }, [editNameValue, commitChange]);
 
   const activeSheet = sheetsRef.current[activeIndex];
 
-  const handleSheetChange = bump;
+  const handleSheetChange = commitChange;
 
   /** Show a rename notice that auto-dismisses after 4 seconds. Reusable for mass import. */
   const showRenameNotice = useCallback((renames: Array<{ from: string; to: string }>) => {
@@ -104,9 +195,10 @@ export default function App() {
     sheetsRef.current = [createSheet(numSamples)];
     nameRef.current = name;
     workbookIdRef.current = null;
-    setActiveIndex(0);
+    setActiveIdx(0);
+    resetHistory();
     bump();
-  }, [bump]);
+  }, [bump, setActiveIdx]);
 
   // Save to browser storage
   const handleStorageSave = useCallback(() => {
@@ -153,10 +245,11 @@ export default function App() {
     sheetsRef.current = result.sheets;
     nameRef.current = result.name;
     workbookIdRef.current = id;
-    setActiveIndex(0);
+    setActiveIdx(0);
+    resetHistory();
     setOpenDialogOpen(false);
     bump();
-  }, [bump]);
+  }, [bump, setActiveIdx]);
 
   // File export (download)
   const handleExport = useCallback(() => {
@@ -180,18 +273,20 @@ export default function App() {
     }
     nameRef.current = uniqueName;
     workbookIdRef.current = null; // imported file has no storage id yet
-    setActiveIndex(0);
+    setActiveIdx(0);
+    resetHistory();
     bump();
-  }, [bump, showRenameNotice]);
+  }, [bump, setActiveIdx, showRenameNotice]);
 
   const handleLoadExample = useCallback((data: FileFormat) => {
     const result = deserializeFile(data);
     sheetsRef.current = result.sheets;
     nameRef.current = result.name;
     workbookIdRef.current = null;
-    setActiveIndex(0);
+    setActiveIdx(0);
+    resetHistory();
     bump();
-  }, [bump]);
+  }, [bump, setActiveIdx]);
 
   const handleDismissSplash = useCallback(() => {
     setLastSeenVersion(CURRENT_VERSION);
@@ -223,7 +318,18 @@ export default function App() {
       }
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
-      switch (e.key.toLowerCase()) {
+      const key = e.key.toLowerCase();
+      // Undo/redo: skip when an input or textarea is focused (let browser handle text undo)
+      if (key === "z" || key === "y") {
+        const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+        if (tag === "input" || tag === "textarea") return;
+        e.preventDefault();
+        if (key === "z" && e.shiftKey) redo();
+        else if (key === "z") undo();
+        else redo(); // Ctrl+Y
+        return;
+      }
+      switch (key) {
         case "h":
           e.preventDefault();
           setHelpOpen(true);
@@ -240,7 +346,7 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [handleStorageSave, handleStorageOpen, handleDismissSplash]);
+  }, [handleStorageSave, handleStorageOpen, handleDismissSplash, undo, redo]);
 
   // Mass export all saved workbooks as zip
   const handleMassExport = useCallback(async () => {
@@ -278,28 +384,27 @@ export default function App() {
     }
     recalculateAll(sheetsRef.current);
     setSettingsOpen(false);
-    bump();
-  }, [bump]);
+    commitChange();
+  }, [commitChange]);
 
   const handleTabSelect = useCallback((index: number) => {
-    setActiveIndex(index);
-  }, []);
+    setActiveIdx(index);
+  }, [setActiveIdx]);
 
   const handleTabRename = useCallback((index: number, name: string) => {
     renameSheet(sheetsRef.current, index, name);
-    bump();
-  }, [bump]);
+    commitChange();
+  }, [commitChange]);
 
   const doDeleteSheet = useCallback((index: number) => {
     sheetsRef.current.splice(index, 1);
-    setActiveIndex((prev) => {
-      if (prev >= sheetsRef.current.length) return sheetsRef.current.length - 1;
-      if (prev > index) return prev - 1;
-      return prev;
-    });
+    let newIdx = activeIndexRef.current;
+    if (newIdx >= sheetsRef.current.length) newIdx = sheetsRef.current.length - 1;
+    else if (newIdx > index) newIdx = newIdx - 1;
+    setActiveIdx(newIdx);
     recalculateAllBulk(sheetsRef.current);
-    bump();
-  }, [bump]);
+    commitChange();
+  }, [commitChange, setActiveIdx]);
 
   const handleTabClose = useCallback((index: number) => {
     if (sheetsRef.current.length <= 1) return;
@@ -324,9 +429,9 @@ export default function App() {
     const name = nextUntitledName(sheetsRef.current);
     const numSamples = sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES;
     sheetsRef.current.push(createSheet(numSamples, name));
-    setActiveIndex(sheetsRef.current.length - 1);
-    bump();
-  }, [bump]);
+    setActiveIdx(sheetsRef.current.length - 1);
+    commitChange();
+  }, [commitChange, setActiveIdx]);
 
   return (
     <div className="app" onClick={() => menuOpen && setMenuOpen(false)}>

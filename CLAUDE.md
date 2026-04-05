@@ -68,7 +68,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Lockable histogram range with zoom +/−, reset, scroll wheel zoom, and drag-to-pan
 - [x] Uncertainty-based cell coloring (CV → white-to-orange-to-red interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
-- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+S save, Ctrl+O open, Ctrl+H help
+- [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+Z undo, Ctrl+Y/Ctrl+Shift+Z redo, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+S save, Ctrl+O open, Ctrl+H help
 - [x] Settings dialog (global sample count)
 - [x] Help dialog (two pages: basics and functions)
 - [x] File naming (editable in header, used as export filename)
@@ -108,7 +108,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Import/export spreadsheet as JSON file (browser download/upload)
 - [x] Save/load to browser storage (localStorage with manual index)
   - [x] Mass export/import as zip bundle of all saved workbooks
-- [ ] Undo/redo
+- [x] Undo/redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z) — full state snapshots, max 100 levels
   - [ ] Undo tree?
 - [ ] Cell formatting (labels, number formats)
 - [x] Functions on ranges: sum, product, mean, median, geomean, min, max, P

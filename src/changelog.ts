@@ -24,6 +24,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 13, summary: "Comparison operators in formulas: ==, !=, >, <, >=, <=" },
   { version: 14, summary: "Markov() transition diagram syntax for Markov chains" },
   { version: 15, summary: "Range functions: sum, mean, median, P() with cell ranges (A1:A10) and chain step ranges (x[0:12])" },
+  { version: 16, summary: "Undo/redo (Ctrl+Z / Ctrl+Y)" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;
