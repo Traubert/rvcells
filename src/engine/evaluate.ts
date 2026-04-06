@@ -1118,7 +1118,7 @@ function evalFunc(
     // Conditional: if(condition, then, else) — condition > 0 is truthy
     case "if":
       if (args.length !== 3) throw new Error("if(cond, then, else) takes 3 arguments");
-      return applyElementwise(args, (c, t, e) => c > 0 ? t : e, n);
+      return applyElementwise(args, (c, t, e) => c !== 0 ? t : e, n);
 
     // Distribution constructors — return sample arrays
     // Each captures its samples for sensitivity analysis via _inlineSampleCapture

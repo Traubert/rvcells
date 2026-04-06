@@ -136,8 +136,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Highlight the row and column labels of the active cell
 - [x] Autosave (on by default, toggle in Settings → Global; only for previously saved workbooks)
 - [ ] Data export (ie. the sample arrays)
-- [ ] CellIndex(income, P(income, 10) idea
-- [ ] Add missing functions to help panel (median(), P(), sum(), product, ...)
+- [x] CellIndex(income, P(income, 10) idea
+- [x] Add missing functions to help panel (median(), P(), sum(), product, ...)
 - [ ] Contribution graph in sensitivity analysis idea
 - [ ] Export to AI agent idea)
 - [ ] Need a more ergonomic way to input large and small numbers

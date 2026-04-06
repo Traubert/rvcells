@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { examples } from "../examples";
 import type { FileFormat } from "../engine/file";
 
@@ -34,7 +34,7 @@ const PAGES = [
               <tr><td><code>StudentT(nu, mu, sigma)</code></td><td>Location-scale Student&apos;s t</td></tr>
             </tbody>
           </table>
-          <p className="help-note">Distributions can also be used in formulas: <code>= Normal(100, 10) * 12</code></p>
+          <p className="help-note">Distributions can be entered directly or used in formulas: <code style={{ whiteSpace: "nowrap" }}>= Normal(100, 10) * 12</code></p>
         </section>
       </>
     ),
@@ -45,7 +45,7 @@ const PAGES = [
       <>
         <section>
           <h3>Math functions</h3>
-          <p className="help-note">All functions work elementwise on distributions.</p>
+          <p className="help-note">All work elementwise on distributions.</p>
           <table className="help-table">
             <tbody>
               <tr><td><code>abs(x)</code></td><td>Absolute value</td></tr>
@@ -53,44 +53,75 @@ const PAGES = [
               <tr><td><code>exp(x)</code></td><td>e<sup>x</sup></td></tr>
               <tr><td><code>log(x)</code> / <code>ln(x)</code></td><td>Natural logarithm</td></tr>
               <tr><td><code>log10(x)</code></td><td>Base-10 logarithm</td></tr>
-              <tr><td><code>floor(x)</code></td><td>Round down</td></tr>
-              <tr><td><code>ceil(x)</code></td><td>Round up</td></tr>
-              <tr><td><code>round(x)</code></td><td>Round to nearest</td></tr>
-            </tbody>
-          </table>
-        </section>
-        <section>
-          <h3>Two-argument functions</h3>
-          <table className="help-table">
-            <tbody>
+              <tr><td><code>floor(x)</code>, <code>ceil(x)</code>, <code>round(x)</code></td><td>Rounding</td></tr>
               <tr><td><code>pow(x, y)</code></td><td>x raised to power y</td></tr>
-              <tr><td><code>min(x, y)</code></td><td>Smaller of x, y</td></tr>
-              <tr><td><code>max(x, y)</code></td><td>Larger of x, y</td></tr>
-            </tbody>
-          </table>
-        </section>
-        <section>
-          <h3>Other functions</h3>
-          <table className="help-table">
-            <tbody>
               <tr><td><code>clamp(x, lo, hi)</code></td><td>Constrain x to [lo, hi]</td></tr>
-              <tr><td><code>if(cond, then, else)</code></td><td>cond &gt; 0 picks <em>then</em>, otherwise <em>else</em></td></tr>
             </tbody>
           </table>
         </section>
         <section>
-          <h3>Sampling functions</h3>
+          <h3>Logic &amp; sampling</h3>
           <table className="help-table">
             <tbody>
+              <tr><td><code>if(cond, then, else)</code></td><td>Nonzero <em>cond</em> picks <em>then</em>, zero picks <em>else</em></td></tr>
               <tr><td><code>Bernoulli(p)</code></td><td>Samples 0 or 1 with probability p</td></tr>
-              <tr><td><code>Discrete(p1, p2, ...)</code></td><td>Samples from &#123;0, 1, ...&#125; with given probabilities</td></tr>
-              <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
-              <tr><td><code>Chain(body, init)</code></td><td>Iterative process; body uses own variable as previous step</td></tr>
-              <tr><td><code>chain[n]</code></td><td>Distribution at step n of a Chain</td></tr>
-              <tr><td><code>ChainIndex(chain, cond)</code></td><td>First step where condition is true (e.g. <code>mean(x) &gt; 100</code>)</td></tr>
+              <tr><td><code>Discrete(p1, p2, ...)</code></td><td>Samples from &#123;0, 1, ...&#125; with given weights</td></tr>
             </tbody>
           </table>
-          <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Use <code>_t</code> inside the body for the current step number.</p>
+          <p className="help-note"><code>if()</code> and comparison operators (<code>&gt;</code>, <code>&lt;</code>, <code>==</code>, ...) work elementwise: each sample is decided independently. So <code>if(Bernoulli(0.3), x, y)</code> picks <code>x</code> for ~30% of samples and <code>y</code> for the rest.</p>
+        </section>
+        <section>
+          <h3>Aggregates</h3>
+          <p className="help-note">Accept ranges (<code>A1:A10</code>) and chain steps (<code>x[0:12]</code>). With a single distribution argument, collapse to a scalar statistic.</p>
+          <table className="help-table">
+            <tbody>
+              <tr><td><code>sum(...)</code></td><td>Sum of values</td></tr>
+              <tr><td><code>product(...)</code></td><td>Product of values</td></tr>
+              <tr><td><code>mean(x)</code></td><td>Arithmetic mean</td></tr>
+              <tr><td><code>median(x)</code></td><td>Median (P50)</td></tr>
+              <tr><td><code>geomean(x)</code></td><td>Geometric mean</td></tr>
+              <tr><td><code>min(x, y)</code> / <code>max(x, y)</code></td><td>Elementwise min/max, or sample min/max when collapsing</td></tr>
+              <tr><td><code>P(dist, pct)</code></td><td>Percentile of a distribution (0&ndash;100)</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </>
+    ),
+  },
+  {
+    title: "Chains",
+    content: (
+      <>
+        <section>
+          <h3>Iterative processes</h3>
+          <table className="help-table">
+            <tbody>
+              <tr><td><code>Chain(body, init)</code></td><td>Iterative process; body uses own variable as previous step</td></tr>
+              <tr><td><code>chain[n]</code></td><td>Distribution at step n</td></tr>
+              <tr><td><code>chain[a:b]</code></td><td>Range of steps (for use with sum, mean, etc.)</td></tr>
+              <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
+              <tr><td><code>_t</code></td><td>Current step number inside a Chain body</td></tr>
+            </tbody>
+          </table>
+          <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Referenced chains auto-sync to the same step.</p>
+          <p className="help-note"><code>ChainIndex(chain, cond)</code> searches for the first step where a condition holds. The condition is evaluated at each step with the chain mapped to that step&apos;s distribution, and must reduce it to a scalar using <code>mean()</code>, <code>P()</code>, <code>min()</code>, etc.:</p>
+          <table className="help-table">
+            <tbody>
+              <tr><td colSpan={2}><code>ChainIndex(x, mean(x) &gt; 1000)</code></td></tr>
+              <tr><td colSpan={2}><code>ChainIndex(x, P(x, 10) &gt; 500)</code></td></tr>
+            </tbody>
+          </table>
+          <p className="help-note">Search limit is configurable in Settings (default 1,000).</p>
+        </section>
+        <section>
+          <h3>Markov chains</h3>
+          <p className="help-note"><code>Markov()</code> is a Chain with transition diagram syntax. States reference emission distributions (variables or cells):</p>
+          <table className="help-table">
+            <tbody>
+              <tr><td colSpan={2}><code>Markov(s0: 0.9 -&gt; s0, 0.1 -&gt; s1; s1: 0.3 -&gt; s0)</code></td></tr>
+            </tbody>
+          </table>
+          <p className="help-note">Missing probability mass becomes a self-transition. Use <code>init stateName</code> to start in a specific state. Access steps with <code>chain[n]</code> or view the Timeline tab.</p>
         </section>
       </>
     ),
@@ -159,6 +190,10 @@ interface HelpDialogProps {
 
 export function HelpDialog({ onClose, onLoadExample }: HelpDialogProps) {
   const [page, setPage] = useState(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Focus the dialog on mount so keystrokes don't reach the grid behind it
+  useEffect(() => { dialogRef.current?.focus(); }, []);
 
   function prev() { setPage((p) => Math.max(0, p - 1)); }
   function next() { setPage((p) => Math.min(TOTAL_PAGES - 1, p + 1)); }
@@ -176,7 +211,7 @@ export function HelpDialog({ onClose, onLoadExample }: HelpDialogProps) {
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog help-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className="dialog help-dialog" ref={dialogRef} tabIndex={-1} style={{ outline: "none" }} onClick={(e) => e.stopPropagation()}>
         <div className="help-header">
           <button
             className="help-nav-arrow"
