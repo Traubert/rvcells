@@ -89,7 +89,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
   - Optional `init stateName` or `init: prob -> state, ...` for initial state
   - Reuses Chain infrastructure: timeline fan chart, ChainIndex, cross-chain sync
 - [x] Comparison operators (==, !=, >, <, >=, <=) returning 1/0 per sample
-- [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls)
+- [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls), click-to-inspect step histogram
 - [x] Resizable detail panel (drag handle)
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete
 - [x] Histogram guidelines (σ and percentile modes)
@@ -133,6 +133,9 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Highlight the row and column labels of the active cell
 - [x] Autosave (on by default, toggle in Settings → Global; only for previously saved workbooks)
 - [ ] Data export (ie. the sample arrays)
+- [ ] CellIndex(income, P(income, 10) idea
+- [ ] Contribution graph in sensitivity analysis idea
+- [ ] Export to AI agent idea)
 
 ### Questions to check out
 

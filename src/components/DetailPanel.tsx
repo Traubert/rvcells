@@ -661,6 +661,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
           compareCell={compareResolved?.cell.chainBody ? compareResolved.cell : undefined}
           compareAddr={compareResolved?.addr}
           compareSheetIndex={compareResolved?.sheetIndex}
+          onClickStep={(step) => { setChainStep(step); setActiveTab("distribution"); }}
         />
       )}
     </div>
@@ -1114,9 +1115,10 @@ interface TimelineViewProps {
   compareCell?: Cell;
   compareAddr?: string;
   compareSheetIndex?: number;
+  onClickStep?: (step: number) => void;
 }
 
-function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareAddr, compareSheetIndex }: TimelineViewProps) {
+function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareAddr, compareSheetIndex, onClickStep }: TimelineViewProps) {
   const [numSteps, setNumSteps] = useState(50);
   const [stepsInput, setStepsInput] = useState("50");
   const [hoverPos, setHoverPos] = useState<{ xFrac: number; yFrac: number } | null>(null);
@@ -1222,8 +1224,18 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
       newMin = Math.max(0, newMin);
       setLockedXRange({ min: newMin, max: newMax });
     }
-    function handleMouseUp() {
+    function handleMouseUp(e: MouseEvent) {
       if (!panDragRef.current) return;
+      const dx = Math.abs(e.clientX - panDragRef.current.startX);
+      if (dx < 5 && onClickStep) {
+        // Treat as click — compute which step was clicked
+        const rect = el!.getBoundingClientRect();
+        const xFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const curMin = panDragRef.current.startMin;
+        const curMax = panDragRef.current.startMax;
+        const step = Math.max(0, Math.round(curMin + xFrac * (curMax - curMin)));
+        onClickStep(step);
+      }
       panDragRef.current = null;
       el!.style.cursor = "";
     }

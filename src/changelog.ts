@@ -27,6 +27,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 16, summary: "Undo/redo (Ctrl+Z / Ctrl+Y)" },
   { version: 17, summary: "Drag to reorder sheet tabs, scroll wheel to cycle between tabs" },
   { version: 18, summary: "Autosave to browser storage on every edit (toggle in Settings)" },
+  { version: 19, summary: "Click a step in the Timeline fan chart to inspect its histogram" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;
