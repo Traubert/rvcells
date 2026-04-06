@@ -130,13 +130,15 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 
 - [ ] Consider: logistic distribution, log-logistic distribution
 - [x] Sheet tabs require double click to rename, and it activates the text, so you can immediately replace, same should happen for workbook name field
-- [ ] Highlight the row and column labels of the active cell
-- [ ] Autosave (only after undo, and with option to disable)
+- [x] Highlight the row and column labels of the active cell
+- [x] Autosave (on by default, toggle in Settings → Global; only for previously saved workbooks)
 - [ ] Data export (ie. the sample arrays)
 
 ### Questions to check out
 
-- [ ] How much are we calling sort() on sample arrays? Should we be storing samples always sorted?
+- [x] How much are we calling sort() on sample arrays? Should we be storing samples always sorted?
+  - Main hot-path sort is `computeStats` (once per distribution cell per eval, ~0.1ms for 10k samples). `P()`, `median()`, `histogram` also sort copies. Not a bottleneck.
+  - Storing sorted would double memory. More importantly, sorted order breaks after any elementwise operation, and sample index correspondence across cells is required for correct arithmetic and correlation analysis. Current approach (sort temporary copies) is correct.
 
 ## Design Principles
 

@@ -3,12 +3,14 @@ import { MIN_NUM_SAMPLES, MAX_NUM_SAMPLES } from "../constants";
 
 interface SettingsDialogProps {
   numSamples: number;
-  onSave: (settings: { numSamples: number }) => void;
+  autosave: boolean;
+  onSave: (settings: { numSamples: number; autosave: boolean }) => void;
   onClose: () => void;
 }
 
-export function SettingsDialog({ numSamples, onSave, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ numSamples, autosave, onSave, onClose }: SettingsDialogProps) {
   const [samples, setSamples] = useState(String(numSamples));
+  const [autoSaveLocal, setAutoSaveLocal] = useState(autosave);
   const [hint, setHint] = useState<string | null>(null);
 
   function showHint(msg: string) {
@@ -33,7 +35,7 @@ export function SettingsDialog({ numSamples, onSave, onClose }: SettingsDialogPr
       showHint(`Clamped to maximum (${MAX_NUM_SAMPLES.toLocaleString()}).`);
       return;
     }
-    onSave({ numSamples: n });
+    onSave({ numSamples: n, autosave: autoSaveLocal });
   }
 
   return (
@@ -41,6 +43,7 @@ export function SettingsDialog({ numSamples, onSave, onClose }: SettingsDialogPr
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>Settings</h2>
 
+        <h3 className="settings-section-header">Workbook</h3>
         <div className="dialog-field">
           <label htmlFor="num-samples">Sample count</label>
           <input
@@ -54,6 +57,20 @@ export function SettingsDialog({ numSamples, onSave, onClose }: SettingsDialogPr
             step={1000}
           />
           {hint && <span className="dialog-hint dialog-hint-warn">{hint}</span>}
+        </div>
+
+        <h3 className="settings-section-header">Global</h3>
+        <div className="dialog-field">
+          <label className="settings-checkbox-label">
+            <input
+              id="autosave"
+              type="checkbox"
+              checked={autoSaveLocal}
+              onChange={(e) => setAutoSaveLocal(e.target.checked)}
+            />
+            Autosave
+          </label>
+          <span className="dialog-hint">Automatically save to browser storage on each edit (only for previously saved workbooks).</span>
         </div>
 
         <div className="dialog-actions">

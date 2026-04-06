@@ -18,6 +18,19 @@ import type { ChangelogEntry } from "./changelog";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "./constants";
 import "./App.css";
 
+const AUTOSAVE_KEY = "rvcells:autosave";
+
+function getAutosave(): boolean {
+  try {
+    const v = localStorage.getItem(AUTOSAVE_KEY);
+    return v !== "false"; // default true
+  } catch { return true; }
+}
+
+function setAutosave(on: boolean) {
+  try { localStorage.setItem(AUTOSAVE_KEY, String(on)); } catch {}
+}
+
 type Snapshot = {
   name: string;
   numSamples: number;
@@ -56,6 +69,7 @@ export default function App() {
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const autosaveRef = useRef(getAutosave());
   const [splash, setSplash] = useState<{ mode: "welcome" | "whats-new" | "changelog"; newEntries: ChangelogEntry[] } | null>(() => {
     const last = getLastSeenVersion();
     if (last === null) return { mode: "welcome", newEntries: [] };
@@ -139,6 +153,11 @@ export default function App() {
 
   const commitChange = useCallback(() => {
     pushSnapshot();
+    // Autosave: silently persist if the workbook has a storage entry
+    if (autosaveRef.current && workbookIdRef.current) {
+      const data = serializeFile(sheetsRef.current, nameRef.current);
+      saveWorkbook(workbookIdRef.current, nameRef.current, data);
+    }
     bump();
   }, [bump]);
 
@@ -378,10 +397,12 @@ export default function App() {
   }, [showRenameNotice]);
 
 
-  const handleSettingsSave = useCallback((settings: { numSamples: number }) => {
+  const handleSettingsSave = useCallback((settings: { numSamples: number; autosave: boolean }) => {
     for (const sheet of sheetsRef.current) {
       sheet.numSamples = settings.numSamples;
     }
+    autosaveRef.current = settings.autosave;
+    setAutosave(settings.autosave);
     recalculateAll(sheetsRef.current);
     setSettingsOpen(false);
     commitChange();
@@ -544,6 +565,7 @@ export default function App() {
       {settingsOpen && (
         <SettingsDialog
           numSamples={activeSheet.numSamples}
+          autosave={autosaveRef.current}
           onSave={handleSettingsSave}
           onClose={() => setSettingsOpen(false)}
         />
