@@ -684,14 +684,11 @@ describe("parseExpr", () => {
   });
 
   describe("chain bracket syntax", () => {
-    it("parses single index as ChainIndex", () => {
+    it("parses single index as chainStep", () => {
       expect(parseExpr("income[5]")).toEqual({
-        type: "funcCall",
-        name: "chainindex",
-        args: [
-          { type: "varRef", name: "income" },
-          { type: "number", value: 5 },
-        ],
+        type: "chainStep",
+        target: { type: "varRef", name: "income" },
+        step: { type: "number", value: 5 },
       });
     });
 
@@ -748,10 +745,10 @@ describe("parseExpr", () => {
 
     it("parses expression indices", () => {
       const result = parseExpr("income[n - 1]");
-      expect(result.type).toBe("funcCall");
-      if (result.type === "funcCall") {
-        expect(result.name).toBe("chainindex");
-        expect(result.args[1].type).toBe("binOp");
+      expect(result.type).toBe("chainStep");
+      if (result.type === "chainStep") {
+        expect(result.target).toEqual({ type: "varRef", name: "income" });
+        expect(result.step.type).toBe("binOp");
       }
     });
   });

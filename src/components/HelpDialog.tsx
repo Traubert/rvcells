@@ -86,7 +86,8 @@ const PAGES = [
               <tr><td><code>Discrete(p1, p2, ...)</code></td><td>Samples from &#123;0, 1, ...&#125; with given probabilities</td></tr>
               <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
               <tr><td><code>Chain(body, init)</code></td><td>Iterative process; body uses own variable as previous step</td></tr>
-              <tr><td><code>ChainIndex(chain, n)</code></td><td>Distribution at step n of a Chain</td></tr>
+              <tr><td><code>chain[n]</code></td><td>Distribution at step n of a Chain</td></tr>
+              <tr><td><code>ChainIndex(chain, cond)</code></td><td>First step where condition is true (e.g. <code>mean(x) &gt; 100</code>)</td></tr>
             </tbody>
           </table>
           <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Use <code>_t</code> inside the body for the current step number.</p>

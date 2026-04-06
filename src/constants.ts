@@ -7,6 +7,10 @@ export const MAX_NUM_SAMPLES = 1_000_000;
 
 export const DEFAULT_NUM_HISTOGRAM_BINS = 100;
 
+export const DEFAULT_CHAIN_SEARCH_LIMIT = 1_000;
+export const MIN_CHAIN_SEARCH_LIMIT = 10;
+export const MAX_CHAIN_SEARCH_LIMIT = 100_000;
+
 /** Unicode-aware identifier character classes (letter/digit/underscore). */
 export const ID_START = /[\p{L}_]/u;
 export const ID_CONT = /[\p{L}\p{N}_]/u;

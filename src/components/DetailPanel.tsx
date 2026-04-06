@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
-import type { Cell, Sheet } from "../engine/types";
+import type { Cell, Sheet, WorkbookSettings } from "../engine/types";
 import { summarize, histogram, collectInputs, spearmanCorrelation, computeTornado, resolveReference, getChainStepResult, computeChainTimeline } from "../engine/evaluate";
 import { formatNumber } from "../format";
 import { DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
@@ -61,12 +61,13 @@ interface DetailPanelProps {
   cell: Cell;
   allSheets: Sheet[];
   sheetIndex: number;
+  settings: WorkbookSettings;
   lockedRange: LockedRange | null;
   onLockRange: (range: LockedRange | null) => void;
   onReturnFocus: () => void;
 }
 
-export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, onLockRange, onReturnFocus }: DetailPanelProps) {
+export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, lockedRange, onLockRange, onReturnFocus }: DetailPanelProps) {
   const baseResult = cell.result;
   if (!baseResult) return null;
 
@@ -77,7 +78,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
   const chainEval = useMemo(() => {
     if (!isChain || chainStep === 0) return { result: baseResult, error: null };
     try {
-      return { result: getChainStepResult(cell, addr, chainStep, allSheets, sheetIndex), error: null };
+      return { result: getChainStepResult(cell, addr, chainStep, allSheets, sheetIndex, settings), error: null };
     } catch (e) {
       return { result: baseResult, error: (e as Error).message };
     }
@@ -127,7 +128,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
     const cmpCell = compareResolved.cell;
     if (cmpCell.chainBody && chainStep > 0) {
       try {
-        return getChainStepResult(cmpCell, compareResolved.addr, chainStep, allSheets, compareResolved.sheetIndex);
+        return getChainStepResult(cmpCell, compareResolved.addr, chainStep, allSheets, compareResolved.sheetIndex, settings);
       } catch {
         return cmpCell.result ?? null;
       }
@@ -652,12 +653,13 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, lockedRange, on
           sheetIndex={sheetIndex}
           addr={addr}
           outputResult={result}
+          settings={settings}
         />
       )}
 
       {activeTab === "timeline" && isChain && (
         <TimelineView
-          cell={cell} addr={addr} allSheets={allSheets} sheetIndex={sheetIndex}
+          cell={cell} addr={addr} allSheets={allSheets} sheetIndex={sheetIndex} settings={settings}
           compareCell={compareResolved?.cell.chainBody ? compareResolved.cell : undefined}
           compareAddr={compareResolved?.addr}
           compareSheetIndex={compareResolved?.sheetIndex}
@@ -819,10 +821,10 @@ function VarianceView({ outputResult, allSheets, sheetIndex, addr }: AnalysisVie
 
 // ─── Tornado view (proper: ±1σ one-at-a-time) ───────────────────────
 
-function TornadoView({ allSheets, sheetIndex, addr, outputResult }: { allSheets: Sheet[]; sheetIndex: number; addr: string; outputResult: import("../engine/types").CellResult }) {
+function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings }: { allSheets: Sheet[]; sheetIndex: number; addr: string; outputResult: import("../engine/types").CellResult; settings: WorkbookSettings }) {
   const bars = useMemo(
-    () => computeTornado(addr, sheetIndex, allSheets),
-    [addr, sheetIndex, allSheets, outputResult]
+    () => computeTornado(addr, sheetIndex, allSheets, settings),
+    [addr, sheetIndex, allSheets, outputResult, settings]
   );
 
   if (bars.length === 0) {
@@ -1112,13 +1114,14 @@ interface TimelineViewProps {
   addr: string;
   allSheets: Sheet[];
   sheetIndex: number;
+  settings: WorkbookSettings;
   compareCell?: Cell;
   compareAddr?: string;
   compareSheetIndex?: number;
   onClickStep?: (step: number) => void;
 }
 
-function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareAddr, compareSheetIndex, onClickStep }: TimelineViewProps) {
+function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell, compareAddr, compareSheetIndex, onClickStep }: TimelineViewProps) {
   const [numSteps, setNumSteps] = useState(50);
   const [stepsInput, setStepsInput] = useState("50");
   const [hoverPos, setHoverPos] = useState<{ xFrac: number; yFrac: number } | null>(null);
@@ -1140,7 +1143,7 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
 
   const timelineResult = useMemo(() => {
     try {
-      return { data: computeChainTimeline(cell, addr, numSteps, allSheets, sheetIndex), error: null };
+      return { data: computeChainTimeline(cell, addr, numSteps, allSheets, sheetIndex, settings), error: null };
     } catch (e) {
       return { data: [], error: (e as Error).message };
     }
@@ -1150,7 +1153,7 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, compareCell, compareA
   const compareTimeline = useMemo(() => {
     if (!compareCell || !compareAddr || compareSheetIndex === undefined) return [];
     try {
-      return computeChainTimeline(compareCell, compareAddr, numSteps, allSheets, compareSheetIndex);
+      return computeChainTimeline(compareCell, compareAddr, numSteps, allSheets, compareSheetIndex, settings);
     } catch {
       return [];
     }

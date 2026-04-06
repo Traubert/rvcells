@@ -69,11 +69,11 @@
         "A7": "Employment chain",
         "B7": "employed = Chain(if(employed, Bernoulli(pKeep), Bernoulli(pFind)), 1)",
         "A8": "State at month 12",
-        "B8": ":= ChainIndex(employed, 12)",
+        "B8": ":= employed[12]",
         "A10": "Income chain (synced with employment)",
         "B10": "income = Chain(if(employed, Normal(5000, 500), Normal(1500, 300)), Normal(5000, 500))",
         "A11": "Income at month 12",
-        "B11": ":= ChainIndex(income, 12)",
+        "B11": ":= income[12]",
         "A12": "Total income (12 months)",
         "B12": ":= sum(income[1:12])",
         "A13": "Average monthly income",
@@ -123,7 +123,7 @@
         "B29": "inc = Markov(e = Normal(5000, 500): 0.95 -> e, 0.05 -> u; u = Normal(1500, 300): 0.2 -> e)",
         "A30": "This is fully self-contained — no separate cells needed.",
         "A32": "Click a Markov cell to see the Timeline fan chart.",
-        "A33": "income[5] is shorthand for ChainIndex(income, 5)."
+        "A33": "income[5] accesses the distribution at step 5 of the chain."
       }
     }
   ]

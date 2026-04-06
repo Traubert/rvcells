@@ -26,7 +26,8 @@ export type Expr =
   | { type: "funcCall"; name: string; args: Expr[] }
   | { type: "markov"; states: MarkovStateDef[]; init: MarkovInit }
   | { type: "cellRange"; startCol: number; startRow: number; endCol: number; endRow: number }
-  | { type: "chainRange"; target: Expr; start: Expr; end: Expr };
+  | { type: "chainRange"; target: Expr; start: Expr; end: Expr }
+  | { type: "chainStep"; target: Expr; step: Expr };
 
 /** A state definition in a Markov() expression */
 export interface MarkovStateDef {
@@ -77,7 +78,12 @@ export type CellAddress = string;
 export interface Sheet {
   name: string;
   cells: Map<CellAddress, Cell>;
+}
+
+/** Workbook-level settings (shared across all sheets) */
+export interface WorkbookSettings {
   numSamples: number;
+  chainSearchLimit: number;
 }
 
 /** Convert 0-indexed col/row to address like "A1" */

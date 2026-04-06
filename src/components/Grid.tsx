@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import type { Sheet, CellAddress, Cell } from "../engine/types";
+import type { Sheet, CellAddress, Cell, WorkbookSettings } from "../engine/types";
 import { toAddress, parseAddress } from "../engine/types";
 import { setCellRaw, summarize, recalculateAll, recalculateAllFrom } from "../engine/evaluate";
 import { formatNumber } from "../format";
@@ -42,13 +42,14 @@ interface GridProps {
   sheet: Sheet;
   allSheets: Sheet[];
   sheetIndex: number;
+  settings: WorkbookSettings;
   onSheetChange: () => void;
   onShowHelp?: () => void;
   onSave?: () => void;
   onOpen?: () => void;
 }
 
-export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, onSave, onOpen }: GridProps) {
+export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, onShowHelp, onSave, onOpen }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
@@ -158,14 +159,14 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
           const step = dRow > 0 ? 1 : -1;
           for (let r = orig.row + step; step > 0 ? r <= target.row : r >= target.row; r += step) {
             const shifted = shiftCellText(sourceCell.raw, 0, r - orig.row);
-            setCellRaw(sheet, toAddress(orig.col, r), shifted, allSheets, sheetIndex);
+            setCellRaw(sheet, toAddress(orig.col, r), shifted, allSheets, sheetIndex, settings);
           }
         } else {
           // Fill horizontally
           const step = dCol > 0 ? 1 : -1;
           for (let c = orig.col + step; step > 0 ? c <= target.col : c >= target.col; c += step) {
             const shifted = shiftCellText(sourceCell.raw, c - orig.col, 0);
-            setCellRaw(sheet, toAddress(c, orig.row), shifted, allSheets, sheetIndex);
+            setCellRaw(sheet, toAddress(c, orig.row), shifted, allSheets, sheetIndex, settings);
           }
         }
 
@@ -210,7 +211,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
         const value = editingInBar
           ? barInputRef.current?.value ?? editValue
           : inputRef.current?.value ?? editValue;
-        setCellRaw(sheet, editingAddr, value, allSheets, sheetIndex);
+        setCellRaw(sheet, editingAddr, value, allSheets, sheetIndex, settings);
         stopEditing();
         onSheetChange();
       }
@@ -230,7 +231,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
 
   const commitEdit = useCallback(
     (addr: CellAddress, value: string) => {
-      setCellRaw(sheet, addr, value, allSheets, sheetIndex);
+      setCellRaw(sheet, addr, value, allSheets, sheetIndex, settings);
       stopEditing();
       onSheetChange();
     },
@@ -332,7 +333,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
     if (cut) {
       for (let r = range.minRow; r <= range.maxRow; r++) {
         for (let c = range.minCol; c <= range.maxCol; c++) {
-          setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex);
+          setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex, settings);
         }
       }
       onSheetChange();
@@ -366,7 +367,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
           const raw = internal.grid[r][c];
           if (raw === null) continue;
           const shifted = shiftCellText(raw, dCol, dRow);
-          setCellRaw(sheet, toAddress(target.col + c, target.row + r), shifted, allSheets, sheetIndex);
+          setCellRaw(sheet, toAddress(target.col + c, target.row + r), shifted, allSheets, sheetIndex, settings);
         }
       }
     } else if (systemText) {
@@ -376,7 +377,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
         for (let c = 0; c < rows[r].length; c++) {
           const val = rows[r][c];
           if (val === undefined) continue;
-          setCellRaw(sheet, toAddress(target.col + c, target.row + r), val, allSheets, sheetIndex);
+          setCellRaw(sheet, toAddress(target.col + c, target.row + r), val, allSheets, sheetIndex, settings);
         }
       }
     }
@@ -476,11 +477,11 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
         if (bounds) {
           for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
             for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
-              setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex);
+              setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex, settings);
             }
           }
         } else {
-          setCellRaw(sheet, selectedAddr, "", allSheets, sheetIndex);
+          setCellRaw(sheet, selectedAddr, "", allSheets, sheetIndex, settings);
         }
         setSelAnchor(null);
         onSheetChange();
@@ -521,14 +522,14 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
       }
       // Ctrl+R: recalculate current cell and dependents
       if (ctrl && e.key.toLowerCase() === "r" && !e.shiftKey) {
-        recalculateAllFrom(allSheets, sheetIndex, [selectedAddr]);
+        recalculateAllFrom(allSheets, sheetIndex, [selectedAddr], settings);
         onSheetChange();
         e.preventDefault();
         return;
       }
       // Ctrl+Shift+R: full recalculate everything
       if (ctrl && e.key.toLowerCase() === "r" && e.shiftKey) {
-        recalculateAll(allSheets);
+        recalculateAll(allSheets, settings);
         onSheetChange();
         e.preventDefault();
         return;
@@ -657,6 +658,7 @@ export function Grid({ sheet, allSheets, sheetIndex, onSheetChange, onShowHelp, 
           cell={sheet.cells.get(selectedAddr)!}
           allSheets={allSheets}
           sheetIndex={sheetIndex}
+          settings={settings}
           lockedRange={lockedRange}
           onLockRange={setLockedRange}
           onReturnFocus={() => gridRef.current?.focus()}

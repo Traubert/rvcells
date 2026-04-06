@@ -15,7 +15,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/parser.ts` — cell input parser and recursive descent expression parser; supports cross-sheet refs (`Sheet.A1`, `'Sheet Name'.var`), comparison operators, Markov() transition diagram syntax
 - `src/engine/parser.test.ts` — parser test suite (vitest)
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
-- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex, Markov compilation and evaluation, summary stats, histograms, sheet rename/delete helpers
+- `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex search, Markov compilation and evaluation, summary stats, histograms, sheet rename/delete helpers
 - `src/engine/storage.ts` — localStorage persistence, zip mass export/import
 - `src/engine/file.ts` — JSON file format v2 (multi-sheet), import/export
 - `src/constants.ts` — shared string, numeric, and distribution name constants
@@ -37,8 +37,10 @@ A spreadsheet application where **random variables are a first-class cell type**
 ### Variables
 A cell can optionally define a **named variable** by prefixing the content with `name = ...`. For example, typing `income = A2 * 1200` into a cell defines a variable `income` whose value is the result of the formula `A2 * 1200`. The variable can then be referenced by name in other formulas (e.g. `= income * 0.3`). Variables are just aliases for the cell they're defined in — they participate in the same DAG.
 
-### Sample counts
-- Default sample count is 10,000 per DAG. Configurable globally via Settings dialog (100–1,000,000).
+### Workbook settings
+- Workbook-level `WorkbookSettings` object holds `numSamples` and `chainSearchLimit` (shared across all sheets, stored sparse in JSON — only non-default values written).
+- Default sample count is 10,000. Configurable via Settings dialog (100–1,000,000).
+- Default ChainIndex search limit is 1,000. Configurable via Settings dialog (10–100,000).
 - Eventually configurable per-DAG and per-cell. Per-cell overrides mean antecedent cells produce more samples to feed the high-resolution cell, while other dependents only use the prefix of the array they need.
 
 ### Evaluation model
@@ -69,7 +71,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Uncertainty-based cell coloring (CV → white-to-orange-to-red interpolation)
 - [x] Label variables: `:= expr` derives variable name from text cell to the left
 - [x] Keyboard shortcuts: Enter/F2 edit, direct typing, Ctrl+C/X/V copy/cut/paste, Ctrl+Z undo, Ctrl+Y/Ctrl+Shift+Z redo, Ctrl+R recalc, Ctrl+Shift+R full recalc, Ctrl+S save, Ctrl+O open, Ctrl+H help
-- [x] Settings dialog (global sample count)
+- [x] Settings dialog (sample count, ChainIndex search limit)
 - [x] Help dialog (two pages: basics and functions)
 - [x] File naming (editable in header, used as export filename)
 - [x] Tabbed sheets with add/close/rename, duplicate name prevention
@@ -80,7 +82,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Bernoulli(p) and Discrete(p1, ..., pN) distributions
 - [x] resample(cell): re-evaluate sub-DAG with fresh random draws
 - [x] Chain(body, init): iterative process with lazy evaluation, auto-resample, cross-chain sync
-- [x] ChainIndex(chain, step): access distribution at a specific chain step
+- [x] chain[step] bracket syntax: access distribution at a specific chain step
+- [x] ChainIndex(chain, condition): search for first step where condition is true (e.g. `mean(x) > 100`)
 - [x] `_t` contextual variable inside Chain bodies (current step number)
 - [x] Markov(states; init): transition diagram syntax compiling to Chain/Discrete/if
   - State names reference emission distributions (variables, cell refs, or cross-sheet refs)
@@ -134,8 +137,11 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Autosave (on by default, toggle in Settings → Global; only for previously saved workbooks)
 - [ ] Data export (ie. the sample arrays)
 - [ ] CellIndex(income, P(income, 10) idea
+- [ ] Add missing functions to help panel (median(), P(), sum(), product, ...)
 - [ ] Contribution graph in sensitivity analysis idea
 - [ ] Export to AI agent idea)
+- [ ] Need a more ergonomic way to input large and small numbers
+- [ ] Shift+click to highlight rectangular range of cells, drag&drop selections
 
 ### Questions to check out
 

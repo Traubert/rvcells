@@ -3,8 +3,9 @@ import { Grid } from "./components/Grid";
 import { TabBar } from "./components/TabBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { OpenDialog } from "./components/OpenDialog";
-import { createSheet, recalculateAll, recalculateAllBulk, renameSheet, findRefsToSheet } from "./engine/evaluate";
+import { createSheet, recalculateAll, recalculateAllBulk, renameSheet, findRefsToSheet, DEFAULT_SETTINGS } from "./engine/evaluate";
 import { saveToFile, openFromFile, serializeFile, deserializeFile } from "./engine/file";
+import type { WorkbookSettings } from "./engine/types";
 import { storageAvailable, saveWorkbook, loadWorkbook, listWorkbooks, generateId, uniqueWorkbookName, exportAllAsZip, importFromZip } from "./engine/storage";
 import type { WorkbookEntry } from "./engine/storage";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -15,7 +16,7 @@ import type { Sheet } from "./engine/types";
 import type { FileFormat } from "./engine/file";
 import { changelog, CURRENT_VERSION, getLastSeenVersion, setLastSeenVersion } from "./changelog";
 import type { ChangelogEntry } from "./changelog";
-import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES } from "./constants";
+import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME } from "./constants";
 import "./App.css";
 
 const AUTOSAVE_KEY = "rvcells:autosave";
@@ -33,7 +34,7 @@ function setAutosave(on: boolean) {
 
 type Snapshot = {
   name: string;
-  numSamples: number;
+  settings: WorkbookSettings;
   activeIndex: number;
   sheets: Array<{ name: string; cells: Record<string, string> }>;
 };
@@ -50,7 +51,8 @@ function nextUntitledName(sheets: Sheet[]): string {
 }
 
 export default function App() {
-  const sheetsRef = useRef<Sheet[]>([createSheet(DEFAULT_NUM_SAMPLES)]);
+  const sheetsRef = useRef<Sheet[]>([createSheet()]);
+  const settingsRef = useRef<WorkbookSettings>({ ...DEFAULT_SETTINGS });
   const nameRef = useRef(DEFAULT_WORKBOOK_NAME);
   const workbookIdRef = useRef<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -94,7 +96,7 @@ export default function App() {
   function takeSnapshot(): Snapshot {
     return {
       name: nameRef.current,
-      numSamples: sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES,
+      settings: { ...settingsRef.current },
       activeIndex: activeIndexRef.current,
       sheets: sheetsRef.current.map((sheet) => {
         const cells: Record<string, string> = {};
@@ -126,11 +128,12 @@ export default function App() {
     const fileFormat: FileFormat = {
       version: 2,
       name: snap.name,
-      settings: { numSamples: snap.numSamples },
+      settings: snap.settings,
       sheets: snap.sheets,
     };
     const result = deserializeFile(fileFormat);
     sheetsRef.current = result.sheets;
+    settingsRef.current = result.settings;
     nameRef.current = result.name;
     activeIndexRef.current = snap.activeIndex;
     setActiveIndex(snap.activeIndex);
@@ -155,7 +158,7 @@ export default function App() {
     pushSnapshot();
     // Autosave: silently persist if the workbook has a storage entry
     if (autosaveRef.current && workbookIdRef.current) {
-      const data = serializeFile(sheetsRef.current, nameRef.current);
+      const data = serializeFile(sheetsRef.current, nameRef.current, settingsRef.current);
       saveWorkbook(workbookIdRef.current, nameRef.current, data);
     }
     bump();
@@ -210,8 +213,8 @@ export default function App() {
   const handleNewFile = useCallback(() => {
     setMenuOpen(false);
     const name = uniqueWorkbookName(DEFAULT_WORKBOOK_NAME);
-    const numSamples = sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES;
-    sheetsRef.current = [createSheet(numSamples)];
+    sheetsRef.current = [createSheet()];
+    settingsRef.current = { ...DEFAULT_SETTINGS };
     nameRef.current = name;
     workbookIdRef.current = null;
     setActiveIdx(0);
@@ -230,7 +233,7 @@ export default function App() {
     if (!workbookIdRef.current) {
       workbookIdRef.current = generateId();
     }
-    const data = serializeFile(sheetsRef.current, nameRef.current);
+    const data = serializeFile(sheetsRef.current, nameRef.current, settingsRef.current);
     const result = saveWorkbook(workbookIdRef.current, nameRef.current, data);
     if (!result.ok) {
       setStorageWarning(result.reason!);
@@ -262,6 +265,7 @@ export default function App() {
     }
     const result = deserializeFile(data);
     sheetsRef.current = result.sheets;
+    settingsRef.current = result.settings;
     nameRef.current = result.name;
     workbookIdRef.current = id;
     setActiveIdx(0);
@@ -272,7 +276,7 @@ export default function App() {
 
   // File export (download)
   const handleExport = useCallback(() => {
-    saveToFile(sheetsRef.current, nameRef.current);
+    saveToFile(sheetsRef.current, nameRef.current, settingsRef.current);
     setMenuOpen(false);
   }, []);
 
@@ -286,6 +290,7 @@ export default function App() {
       return;
     }
     sheetsRef.current = result.sheets;
+    settingsRef.current = result.settings;
     const uniqueName = uniqueWorkbookName(result.name);
     if (uniqueName !== result.name) {
       showRenameNotice([{ from: result.name, to: uniqueName }]);
@@ -300,6 +305,7 @@ export default function App() {
   const handleLoadExample = useCallback((data: FileFormat) => {
     const result = deserializeFile(data);
     sheetsRef.current = result.sheets;
+    settingsRef.current = result.settings;
     nameRef.current = result.name;
     workbookIdRef.current = null;
     setActiveIdx(0);
@@ -397,13 +403,11 @@ export default function App() {
   }, [showRenameNotice]);
 
 
-  const handleSettingsSave = useCallback((settings: { numSamples: number; autosave: boolean }) => {
-    for (const sheet of sheetsRef.current) {
-      sheet.numSamples = settings.numSamples;
-    }
-    autosaveRef.current = settings.autosave;
-    setAutosave(settings.autosave);
-    recalculateAll(sheetsRef.current);
+  const handleSettingsSave = useCallback((newSettings: { numSamples: number; chainSearchLimit: number; autosave: boolean }) => {
+    settingsRef.current = { numSamples: newSettings.numSamples, chainSearchLimit: newSettings.chainSearchLimit };
+    autosaveRef.current = newSettings.autosave;
+    setAutosave(newSettings.autosave);
+    recalculateAll(sheetsRef.current, settingsRef.current);
     setSettingsOpen(false);
     commitChange();
   }, [commitChange]);
@@ -465,8 +469,7 @@ export default function App() {
 
   const handleTabAdd = useCallback(() => {
     const name = nextUntitledName(sheetsRef.current);
-    const numSamples = sheetsRef.current[0]?.numSamples ?? DEFAULT_NUM_SAMPLES;
-    sheetsRef.current.push(createSheet(numSamples, name));
+    sheetsRef.current.push(createSheet(name));
     setActiveIdx(sheetsRef.current.length - 1);
     commitChange();
   }, [commitChange, setActiveIdx]);
@@ -550,6 +553,7 @@ export default function App() {
         sheet={activeSheet}
         allSheets={sheetsRef.current}
         sheetIndex={activeIndex}
+        settings={settingsRef.current}
         onSheetChange={handleSheetChange}
         onShowHelp={() => setHelpOpen(true)}
         onSave={handleStorageSave}
@@ -564,7 +568,8 @@ export default function App() {
       )}
       {settingsOpen && (
         <SettingsDialog
-          numSamples={activeSheet.numSamples}
+          numSamples={settingsRef.current.numSamples}
+          chainSearchLimit={settingsRef.current.chainSearchLimit}
           autosave={autosaveRef.current}
           onSave={handleSettingsSave}
           onClose={() => setSettingsOpen(false)}

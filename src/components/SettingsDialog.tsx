@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { MIN_NUM_SAMPLES, MAX_NUM_SAMPLES } from "../constants";
+import { MIN_NUM_SAMPLES, MAX_NUM_SAMPLES, MIN_CHAIN_SEARCH_LIMIT, MAX_CHAIN_SEARCH_LIMIT } from "../constants";
 
 interface SettingsDialogProps {
   numSamples: number;
+  chainSearchLimit: number;
   autosave: boolean;
-  onSave: (settings: { numSamples: number; autosave: boolean }) => void;
+  onSave: (settings: { numSamples: number; chainSearchLimit: number; autosave: boolean }) => void;
   onClose: () => void;
 }
 
-export function SettingsDialog({ numSamples, autosave, onSave, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ numSamples, chainSearchLimit, autosave, onSave, onClose }: SettingsDialogProps) {
   const [samples, setSamples] = useState(String(numSamples));
+  const [searchLimit, setSearchLimit] = useState(String(chainSearchLimit));
   const [autoSaveLocal, setAutoSaveLocal] = useState(autosave);
   const [hint, setHint] = useState<string | null>(null);
 
@@ -35,7 +37,23 @@ export function SettingsDialog({ numSamples, autosave, onSave, onClose }: Settin
       showHint(`Clamped to maximum (${MAX_NUM_SAMPLES.toLocaleString()}).`);
       return;
     }
-    onSave({ numSamples: n, autosave: autoSaveLocal });
+    const limit = parseInt(searchLimit, 10);
+    if (isNaN(limit) || String(limit) !== searchLimit.trim()) {
+      setSearchLimit(String(chainSearchLimit));
+      showHint("Not a valid integer — reverted.");
+      return;
+    }
+    if (limit < MIN_CHAIN_SEARCH_LIMIT) {
+      setSearchLimit(String(MIN_CHAIN_SEARCH_LIMIT));
+      showHint(`Clamped to minimum (${MIN_CHAIN_SEARCH_LIMIT.toLocaleString()}).`);
+      return;
+    }
+    if (limit > MAX_CHAIN_SEARCH_LIMIT) {
+      setSearchLimit(String(MAX_CHAIN_SEARCH_LIMIT));
+      showHint(`Clamped to maximum (${MAX_CHAIN_SEARCH_LIMIT.toLocaleString()}).`);
+      return;
+    }
+    onSave({ numSamples: n, chainSearchLimit: limit, autosave: autoSaveLocal });
   }
 
   return (
@@ -56,8 +74,22 @@ export function SettingsDialog({ numSamples, autosave, onSave, onClose }: Settin
             max={MAX_NUM_SAMPLES}
             step={1000}
           />
-          {hint && <span className="dialog-hint dialog-hint-warn">{hint}</span>}
         </div>
+        <div className="dialog-field">
+          <label htmlFor="chain-search-limit">ChainIndex search limit</label>
+          <input
+            id="chain-search-limit"
+            type="number"
+            value={searchLimit}
+            onChange={(e) => setSearchLimit(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+            min={MIN_CHAIN_SEARCH_LIMIT}
+            max={MAX_CHAIN_SEARCH_LIMIT}
+            step={100}
+          />
+          <span className="dialog-hint">Maximum steps ChainIndex() will search before returning an error.</span>
+        </div>
+        {hint && <span className="dialog-hint dialog-hint-warn">{hint}</span>}
 
         <h3 className="settings-section-header">Global</h3>
         <div className="dialog-field">

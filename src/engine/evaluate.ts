@@ -1,8 +1,8 @@
-import type { Cell, CellAddress, CellResult, Expr, MarkovInit, MarkovStateDef, Sheet } from "./types";
+import type { Cell, CellAddress, CellResult, Expr, MarkovInit, MarkovStateDef, Sheet, WorkbookSettings } from "./types";
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
-import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, SAMPLE_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
+import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, DEFAULT_CHAIN_SEARCH_LIMIT, SAMPLE_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
 import type { InlineSample } from "./types";
 
 /** Module-level capture for inline distribution samples during formula evaluation.
@@ -90,6 +90,10 @@ function exprDeps(expr: Expr): {
         walk(e.start);
         walk(e.end);
         break;
+      case "chainStep":
+        walk(e.target);
+        walk(e.step);
+        break;
     }
   }
   walk(expr);
@@ -176,6 +180,7 @@ interface CrossSheetCtx {
   currentSheetIdx: number;
   allVarMaps: Map<string, CellAddress>[];
   allResults: Map<CellAddress, CellResult>[];
+  settings: WorkbookSettings;
 }
 
 /** Check if a cell's formula is a Chain() or Markov() call */
@@ -404,6 +409,45 @@ function evalExpr(
       }
 
       return initialEmission;
+    }
+
+    case "chainStep": {
+      // Resolve chain cell from target expression
+      const target = expr.target;
+      let targetAddr: CellAddress;
+      let targetCells = cells;
+      let targetResults = results;
+      let targetVarMap = varMap;
+      if (target.type === "cellRef") {
+        targetAddr = toAddress(target.col, target.row);
+      } else if (target.type === "varRef") {
+        const resolved = varMap.get(target.name);
+        if (!resolved) throw new Error(`Unknown variable: ${target.name}`);
+        targetAddr = resolved;
+      } else if ((target.type === "sheetVarRef" || target.type === "sheetCellRef") && ctx) {
+        const targetIdx = findSheetIndex(ctx.allSheets, target.sheet);
+        if (targetIdx < 0) throw new Error(`Unknown sheet: ${target.sheet}`);
+        if (target.type === "sheetVarRef") {
+          const addr = ctx.allVarMaps[targetIdx].get(target.name);
+          if (!addr) throw new Error(`Unknown variable "${target.name}" in sheet "${target.sheet}"`);
+          targetAddr = addr;
+        } else {
+          targetAddr = toAddress(target.col, target.row);
+        }
+        targetCells = ctx.allSheets[targetIdx].cells;
+        targetResults = ctx.allResults[targetIdx];
+        targetVarMap = ctx.allVarMaps[targetIdx];
+      } else {
+        throw new Error("Chain step target must be a cell reference or variable");
+      }
+      const targetCell = targetCells.get(targetAddr);
+      if (!targetCell?.chainBody) throw new Error("Bracket index requires a Chain cell");
+      const stepResult = evalExpr(expr.step, results, varMap, n, cells, ctx);
+      if (stepResult.kind !== "scalar") throw new Error("Chain step must be a scalar");
+      const step = Math.floor(stepResult.value);
+      if (step < 0) throw new Error("Chain step must be non-negative");
+      const values = evaluateChainStep(targetCell, targetAddr, step, targetResults, targetVarMap, n, targetCells, ctx);
+      return { kind: "samples", values };
     }
 
     case "cellRange":
@@ -885,9 +929,9 @@ function evalFunc(
     return initResult; // direct references to chain cell get the initial value
   }
 
-  // ChainIndex(chain_ref, step) — get distribution at a specific step
+  // ChainIndex(chain, condition) — find first step where condition is true
   if (name === "chainindex") {
-    if (argExprs.length !== 2) throw new Error("ChainIndex(chain, step) takes 2 arguments");
+    if (argExprs.length !== 2) throw new Error("ChainIndex(chain, condition) takes 2 arguments");
     // Resolve chain cell
     const arg = argExprs[0];
     let targetAddr: CellAddress;
@@ -904,13 +948,22 @@ function evalFunc(
     if (!targetCell || !targetCell.chainBody) {
       throw new Error("ChainIndex() first argument must be a Chain cell");
     }
-    // Evaluate step number
-    const stepResult = evalExpr(argExprs[1], results, varMap, n, cells, ctx);
-    if (stepResult.kind !== "scalar") throw new Error("ChainIndex() step must be a scalar");
-    const step = Math.floor(stepResult.value);
-    if (step < 0) throw new Error("ChainIndex() step must be non-negative");
-    const values = evaluateChainStep(targetCell, targetAddr, step, results, varMap, n, cells, ctx);
-    return { kind: "samples", values };
+    const limit = ctx?.settings?.chainSearchLimit ?? DEFAULT_CHAIN_SEARCH_LIMIT;
+    const conditionExpr = argExprs[1];
+    // Search: evaluate condition at each step with chain mapped to that step's distribution
+    for (let step = 0; step <= limit; step++) {
+      const stepValues = evaluateChainStep(targetCell, targetAddr, step, results, varMap, n, cells, ctx);
+      const shadowResults = new Map(results);
+      shadowResults.set(targetAddr, { kind: "samples", values: stepValues });
+      const condResult = evalExpr(conditionExpr, shadowResults, varMap, n, cells, ctx);
+      if (condResult.kind === "samples") {
+        throw new Error("ChainIndex() condition must evaluate to a scalar (use mean(), P(), min(), max(), etc.)");
+      }
+      if (condResult.value > 0) {
+        return { kind: "scalar", value: step };
+      }
+    }
+    throw new Error(`ChainIndex: search limit (${limit}) exceeded — condition never became true`);
   }
 
   // ─── Aggregate functions (support ranges and arity-based disambiguation) ──
@@ -1442,12 +1495,12 @@ function clearChainCaches(allSheets: Sheet[]): void {
   }
 }
 
-export function recalculateBulk(sheet: Sheet): void {
-  recalculateAllBulk([sheet]);
+export function recalculateBulk(sheet: Sheet, settings = DEFAULT_SETTINGS): void {
+  recalculateAllBulk([sheet], settings);
 }
 
 /** Bulk recalculate all sheets with cross-sheet support and cycle detection. */
-export function recalculateAllBulk(allSheets: Sheet[]): void {
+export function recalculateAllBulk(allSheets: Sheet[], settings = DEFAULT_SETTINGS): void {
   clearChainCaches(allSheets);
   const { allVarMaps, allDupAddrs } = buildAllVarMaps(allSheets);
   const { order, cycleAddrs } = globalTopoSortWithCycles(allSheets, allVarMaps);
@@ -1475,17 +1528,18 @@ export function recalculateAllBulk(allSheets: Sheet[]): void {
       currentSheetIdx: sheetIdx,
       allVarMaps,
       allResults,
+      settings,
     };
-    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], sheet.numSamples, sheet.cells, false, ctx);
+    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], settings.numSamples, sheet.cells, false, ctx);
   }
 }
 
 /** Recalculate all sheets from scratch. */
-export function recalculate(sheet: Sheet): void {
-  recalculateAll([sheet]);
+export function recalculate(sheet: Sheet, settings = DEFAULT_SETTINGS): void {
+  recalculateAll([sheet], settings);
 }
 
-export function recalculateAll(allSheets: Sheet[]): void {
+export function recalculateAll(allSheets: Sheet[], settings = DEFAULT_SETTINGS): void {
   clearChainCaches(allSheets);
   const { allVarMaps, allDupAddrs } = buildAllVarMaps(allSheets);
   const order = globalTopoSort(allSheets, allVarMaps);
@@ -1501,8 +1555,9 @@ export function recalculateAll(allSheets: Sheet[]): void {
       currentSheetIdx: sheetIdx,
       allVarMaps,
       allResults,
+      settings,
     };
-    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], sheet.numSamples, sheet.cells, false, ctx);
+    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], settings.numSamples, sheet.cells, false, ctx);
   }
 }
 
@@ -1510,14 +1565,15 @@ export function recalculateAll(allSheets: Sheet[]): void {
  * Incremental recalculation across all sheets: only re-evaluate changed cells
  * and their downstream dependents (including cross-sheet).
  */
-export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[]): void {
-  recalculateAllFrom([sheet], 0, changedAddrs);
+export function recalculateFrom(sheet: Sheet, changedAddrs: CellAddress[], settings = DEFAULT_SETTINGS): void {
+  recalculateAllFrom([sheet], 0, changedAddrs, settings);
 }
 
 export function recalculateAllFrom(
   allSheets: Sheet[],
   changedSheetIdx: number,
   changedAddrs: CellAddress[],
+  settings = DEFAULT_SETTINGS,
 ): void {
   clearChainCaches(allSheets);
   const { allVarMaps, allDupAddrs, allClearedAddrs } = buildAllVarMaps(allSheets);
@@ -1556,8 +1612,9 @@ export function recalculateAllFrom(
       currentSheetIdx: sheetIdx,
       allVarMaps,
       allResults,
+      settings,
     };
-    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], sheet.numSamples, sheet.cells, false, ctx);
+    evalCell(addr, cell, allResults[sheetIdx], allVarMaps[sheetIdx], settings.numSamples, sheet.cells, false, ctx);
   }
 }
 
@@ -1569,6 +1626,7 @@ export function setCellRaw(
   raw: string,
   allSheets?: Sheet[],
   sheetIndex?: number,
+  settings = DEFAULT_SETTINGS,
 ): Cell | undefined {
   const sheets = allSheets ?? [sheet];
   const si = sheetIndex ?? 0;
@@ -1584,7 +1642,7 @@ export function setCellRaw(
         dirty.push(rightAddr);
       }
     }
-    recalculateAllFrom(sheets, si, dirty);
+    recalculateAllFrom(sheets, si, dirty, settings);
     return undefined;
   }
 
@@ -1639,7 +1697,7 @@ export function setCellRaw(
     }
   }
 
-  recalculateAllFrom(sheets, si, dirty);
+  recalculateAllFrom(sheets, si, dirty, settings);
   return cell;
 }
 
@@ -1699,9 +1757,15 @@ export function resolveReference(
 }
 
 /** Create an empty sheet */
-export function createSheet(numSamples = DEFAULT_NUM_SAMPLES, name = DEFAULT_SHEET_NAME): Sheet {
-  return { name, cells: new Map(), numSamples };
+export function createSheet(name = DEFAULT_SHEET_NAME): Sheet {
+  return { name, cells: new Map() };
 }
+
+/** Default workbook settings */
+export const DEFAULT_SETTINGS: WorkbookSettings = {
+  numSamples: DEFAULT_NUM_SAMPLES,
+  chainSearchLimit: DEFAULT_CHAIN_SEARCH_LIMIT,
+};
 
 /**
  * Find all cross-sheet references to a given sheet name.
@@ -1842,6 +1906,7 @@ function hasInlineDistribution(expr: Expr): boolean {
       return false; // Markov emissions come from external cells, not inline
     case "cellRange":
     case "chainRange":
+    case "chainStep":
       return false;
   }
 }
@@ -2099,6 +2164,7 @@ export function computeTornado(
   outputAddr: CellAddress,
   outputSheetIdx: number,
   allSheets: Sheet[],
+  settings = DEFAULT_SETTINGS,
 ): TornadoBar[] {
   const inputs = collectInputs(outputAddr, outputSheetIdx, allSheets);
   const distInputs = inputs.filter((inp) => !inp.isScalar && inp.result.kind === "samples");
@@ -2160,6 +2226,7 @@ export function computeTornado(
       currentSheetIdx: outputSheetIdx,
       allVarMaps,
       allResults: scenarioResults,
+      settings,
     };
 
     _deterministicMode = true;
@@ -2249,6 +2316,7 @@ export function computeChainTimeline(
   numSteps: number,
   allSheets: Sheet[],
   sheetIndex: number,
+  settings = DEFAULT_SETTINGS,
 ): (ReturnType<typeof summarize> & { step: number })[] {
   if (!cell.chainBody || !cell.chainInitial) return [];
 
@@ -2268,10 +2336,11 @@ export function computeChainTimeline(
     currentSheetIdx: sheetIndex,
     allVarMaps,
     allResults,
+    settings,
   };
 
   // Ensure steps are computed
-  evaluateChainStep(cell, cellAddr, numSteps, allResults[sheetIndex], allVarMaps[sheetIndex], sheet.numSamples, sheet.cells, ctx);
+  evaluateChainStep(cell, cellAddr, numSteps, allResults[sheetIndex], allVarMaps[sheetIndex], settings.numSamples, sheet.cells, ctx);
 
   const timeline: (ReturnType<typeof summarize> & { step: number })[] = [];
   for (let t = 0; t <= numSteps && t < (cell.chainCache?.length ?? 0); t++) {
@@ -2288,6 +2357,7 @@ export function getChainStepResult(
   step: number,
   allSheets: Sheet[],
   sheetIndex: number,
+  settings = DEFAULT_SETTINGS,
 ): CellResult {
   if (!cell.chainBody || !cell.chainInitial) {
     return cell.result ?? { kind: "scalar", value: 0 };
@@ -2308,9 +2378,10 @@ export function getChainStepResult(
     currentSheetIdx: sheetIndex,
     allVarMaps,
     allResults,
+    settings,
   };
 
-  const values = evaluateChainStep(cell, cellAddr, step, allResults[sheetIndex], allVarMaps[sheetIndex], sheet.numSamples, sheet.cells, ctx);
+  const values = evaluateChainStep(cell, cellAddr, step, allResults[sheetIndex], allVarMaps[sheetIndex], settings.numSamples, sheet.cells, ctx);
   return { kind: "samples", values };
 }
 

@@ -279,11 +279,20 @@ wealth = Chain(wealth * stock_return + income - expenses, 10000)
 
 The first argument is the body expression — evaluated iteratively, where the cell's own variable name (`wealth`) refers to the previous step's value. The second argument is the initial value (scalar or distribution). Referenced distribution cells are automatically resampled each step, so `stock_return` gets fresh random draws without needing `resample()`.
 
-**Accessing steps.** Referencing a Chain cell directly returns its initial value. Use `ChainIndex(chain, step)` to get the distribution at a specific step:
+**Accessing steps.** Referencing a Chain cell directly returns its initial value. Use bracket syntax to get the distribution at a specific step:
 
 ```
-= ChainIndex(wealth, 120)    (distribution after 120 steps)
+= wealth[120]    (distribution after 120 steps)
 ```
+
+**Finding a step.** `ChainIndex(chain, condition)` searches for the first step where a condition becomes true. The condition must collapse the distribution to a scalar using functions like `mean()`, `P()`, `min()`, `max()`, `median()`:
+
+```
+= ChainIndex(wealth, P(wealth, 10) > 1000000)    (first step where P10 exceeds 1M)
+= ChainIndex(wealth, mean(wealth) > 500000)       (first step where mean exceeds 500K)
+```
+
+The search limit (default 1,000) is configurable in Settings. If the condition is never met within the limit, the cell shows an error.
 
 **Cross-chain synchronization.** If a Chain body references another Chain cell, the two automatically stay in lockstep — step 5 of the outer chain uses step 5 of the inner chain.
 
@@ -309,7 +318,7 @@ B4: income = Markov(emp: 0.95 -> emp, 0.05 -> unemp; unemp: 0.2 -> emp)
 
 Each state is named after the variable it emits from. The syntax `emp: 0.95 -> emp, 0.05 -> unemp` means: "when in state `emp`, stay with probability 0.95, transition to `unemp` with probability 0.05." States are separated by semicolons.
 
-At each step, the chain transitions to a new state and samples from that state's emission distribution. The result is a full distribution at every step — click the cell for the timeline fan chart, or use `ChainIndex(income, 12)` to get month 12.
+At each step, the chain transitions to a new state and samples from that state's emission distribution. The result is a full distribution at every step — click the cell for the timeline fan chart, or use `income[12]` to get month 12.
 
 **Implicit self-transitions.** Missing probability mass is assigned to self-transitions automatically. In the example above, `unemp` only specifies `0.2 -> emp`, so the remaining 0.8 stays in `unemp`. You never need to list a self-transition unless you want to be explicit.
 
@@ -375,7 +384,7 @@ Use bracket syntax to access a range of chain steps:
 = sum(income[1:12])    (total income over 12 months)
 = mean(income[0:11])   (average monthly income)
 = income[:35]          (shorthand for income[0:35])
-= income[5]            (single step — same as ChainIndex(income, 5))
+= income[5]            (single step — distribution at step 5)
 ```
 
 Both ends are inclusive: `income[1:12]` gives steps 1, 2, ..., 12 (12 values). The shorthand `income[:n]` omits the start, defaulting to 0.

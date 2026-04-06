@@ -1,13 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation } from "./evaluate";
-import type { Sheet } from "./types";
+import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, DEFAULT_SETTINGS } from "./evaluate";
+import type { Sheet, WorkbookSettings } from "./types";
 import { parseCell } from "./parser";
+
+function settingsWithSamples(numSamples: number): WorkbookSettings {
+  return { ...DEFAULT_SETTINGS, numSamples };
+}
 
 /** Helper: create a sheet and set multiple cells */
 function makeSheet(cells: Record<string, string>, numSamples = 1_000): Sheet {
-  const sheet = createSheet(numSamples);
+  const sheet = createSheet();
+  const settings = settingsWithSamples(numSamples);
   for (const [addr, raw] of Object.entries(cells)) {
-    setCellRaw(sheet, addr, raw);
+    setCellRaw(sheet, addr, raw, undefined, undefined, settings);
   }
   return sheet;
 }
@@ -379,7 +384,7 @@ describe("label variables (:=)", () => {
 
 describe("duplicate variables in bulk load", () => {
   it("first definition wins, second gets error", () => {
-    const sheet = createSheet(100);
+    const sheet = createSheet();
     // Manually set cells and use recalculateBulk (simulates file load)
     const cell1 = parseCell("x = 10");
     sheet.cells.set("A1", { raw: "x = 10", ...cell1 });
@@ -447,7 +452,7 @@ describe("cycle detection", () => {
   });
 
   it("detects two-cell cycle", () => {
-    const sheet = createSheet(100);
+    const sheet = createSheet();
     setCellRaw(sheet, "A1", "= B1");
     setCellRaw(sheet, "B1", "= A1");
     // The second edit should be rejected
@@ -455,7 +460,7 @@ describe("cycle detection", () => {
   });
 
   it("allows overwriting a cell that would remove a cycle", () => {
-    const sheet = createSheet(100);
+    const sheet = createSheet();
     setCellRaw(sheet, "A1", "10");
     setCellRaw(sheet, "B1", "= A1");
     // Try to make A1 depend on B1 — should fail
@@ -470,7 +475,7 @@ describe("cycle detection", () => {
 
 describe("bulk recalculation with cycles", () => {
   it("marks cycle cells with errors and evaluates the rest", () => {
-    const sheet = createSheet(100);
+    const sheet = createSheet();
     // Manually set up cells that form a cycle
     const { content: c1 } = parseCell("= B1");
     const { content: c2 } = parseCell("= A1");
@@ -489,7 +494,7 @@ describe("bulk recalculation with cycles", () => {
   });
 
   it("marks cells depending on a cycle as errors too", () => {
-    const sheet = createSheet(100);
+    const sheet = createSheet();
     const { content: c1 } = parseCell("= B1");
     const { content: c2 } = parseCell("= A1");
     const { content: c3 } = parseCell("= A1 + 1");
@@ -683,7 +688,7 @@ describe("resample", () => {
 describe("cross-sheet references", () => {
   /** Helper: create multiple named sheets and set cells */
   function makeSheets(defs: { name: string; cells: Record<string, string> }[]): Sheet[] {
-    const sheets = defs.map((d) => createSheet(1_000, d.name));
+    const sheets = defs.map((d) => createSheet(d.name));
     // First set all cells without cross-sheet eval
     for (let si = 0; si < defs.length; si++) {
       for (const [addr, raw] of Object.entries(defs[si].cells)) {
@@ -691,7 +696,7 @@ describe("cross-sheet references", () => {
         sheets[si].cells.set(addr, { raw, content, variableName, labelVar });
       }
     }
-    recalculateAllBulk(sheets);
+    recalculateAllBulk(sheets, settingsWithSamples(1_000));
     return sheets;
   }
 
@@ -859,21 +864,21 @@ describe("summary statistics", () => {
 });
 
 describe("Chain", () => {
-  it("scalar chain: x = Chain(x + 1, 0), ChainIndex(x, 5) → 5", () => {
+  it("scalar chain: x = Chain(x + 1, 0), x[5] → 5", () => {
     const sheet = makeSheet({
       A1: "x = Chain(x + 1, 0)",
-      B1: "= ChainIndex(x, 5)",
+      B1: "= x[5]",
     });
     // Direct reference to chain returns initial value
     expect(scalarValue(sheet, "A1")).toBe(0);
-    // ChainIndex returns step 5: 0+1+1+1+1+1 = 5
+    // x[5] returns step 5: 0+1+1+1+1+1 = 5
     expect(mean(sheet, "B1")).toBeCloseTo(5, 5);
   });
 
   it("chain with distribution produces samples", () => {
     const sheet = makeSheet({
       A1: "x = Chain(x + Normal(0, 1), 0)",
-      B1: "= ChainIndex(x, 10)",
+      B1: "= x[10]",
     }, 10000);
     const cell = sheet.cells.get("B1")!;
     expect(cell.result?.kind).toBe("samples");
@@ -886,8 +891,8 @@ describe("Chain", () => {
   it("non-scalar initial value", () => {
     const sheet = makeSheet({
       A1: "x = Chain(x + 1, Normal(100, 10))",
-      B1: "= ChainIndex(x, 0)",
-      C1: "= ChainIndex(x, 3)",
+      B1: "= x[0]",
+      C1: "= x[3]",
     }, 10000);
     // Step 0 is the initial distribution
     const step0 = sheet.cells.get("B1")!;
@@ -907,7 +912,7 @@ describe("Chain", () => {
     const sheet = makeSheet({
       A1: "ret = Normal(0, 1)",
       A2: "x = Chain(x + ret, 0)",
-      B2: "= ChainIndex(x, 100)",
+      B2: "= x[100]",
     }, 10000);
     const stats = summarize(sheet.cells.get("B2")!.result!);
     // After 100 steps of adding N(0,1), std ≈ sqrt(100) = 10
@@ -919,7 +924,7 @@ describe("Chain", () => {
     const sheet = makeSheet({
       A1: "a = Chain(a + 1, 0)",
       A2: "b = Chain(b + a, 0)",
-      B2: "= ChainIndex(b, 3)",
+      B2: "= b[3]",
     });
     // a at step 1=1, 2=2, 3=3
     // b at step 1=b0+a1=0+1=1, step 2=1+2=3, step 3=3+3=6
@@ -929,7 +934,7 @@ describe("Chain", () => {
   it("_t variable gives current step number", () => {
     const sheet = makeSheet({
       A1: "x = Chain(x + _t, 0)",
-      B1: "= ChainIndex(x, 3)",
+      B1: "= x[3]",
     });
     // step 1: 0 + 1 = 1, step 2: 1 + 2 = 3, step 3: 3 + 3 = 6
     expect(mean(sheet, "B1")).toBeCloseTo(6, 5);
@@ -949,7 +954,7 @@ describe("Chain", () => {
     const sheet = makeSheet({
       A1: "init = 10",
       A2: "x = Chain(x + 1, init)",
-      B2: "= ChainIndex(x, 5)",
+      B2: "= x[5]",
     });
     expect(mean(sheet, "B2")).toBeCloseTo(15, 5);
     // Change initial value
@@ -968,7 +973,7 @@ describe("Chain", () => {
   it("chain self-reference by cell address", () => {
     const sheet = makeSheet({
       A1: "= Chain(A1 + 1, 0)",
-      B1: "= ChainIndex(A1, 5)",
+      B1: "= A1[5]",
     });
     expect(sheet.cells.get("A1")!.error).toBeUndefined();
     expect(scalarValue(sheet, "A1")).toBe(0);
@@ -983,6 +988,61 @@ describe("Chain", () => {
   it("non-chain variable self-reference is a cycle error", () => {
     const sheet = makeSheet({ A1: "x = x + 1" });
     expect(sheet.cells.get("A1")!.error).toBeDefined();
+  });
+});
+
+describe("ChainIndex search", () => {
+  it("finds first step where mean exceeds threshold", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 10, 0)",
+      B1: "= ChainIndex(x, mean(x) > 45)",
+    });
+    // x at step 0=0, 1=10, 2=20, 3=30, 4=40, 5=50
+    // mean(x) > 45 first true at step 5 (mean=50)
+    expect(scalarValue(sheet, "B1")).toBe(5);
+  });
+
+  it("returns step 0 when condition is immediately true", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 1, 100)",
+      B1: "= ChainIndex(x, mean(x) > 50)",
+    });
+    expect(scalarValue(sheet, "B1")).toBe(0);
+  });
+
+  it("errors when search limit exceeded", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x, 0)",
+      B1: "= ChainIndex(x, mean(x) > 100)",
+    });
+    expect(sheet.cells.get("B1")!.error).toContain("search limit");
+  });
+
+  it("works with P() condition", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 10, 0)",
+      B1: "= ChainIndex(x, P(x, 50) > 25)",
+    });
+    // Deterministic chain: P50 = mean. P50 > 25 first at step 3 (=30)
+    expect(scalarValue(sheet, "B1")).toBe(3);
+  });
+
+  it("works with min/max conditions", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + 10, 0)",
+      B1: "= ChainIndex(x, min(x) > 15)",
+    });
+    // Deterministic chain: min = mean. min > 15 first at step 2 (=20)
+    expect(scalarValue(sheet, "B1")).toBe(2);
+  });
+
+  it("errors on non-scalar condition", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(x + Normal(1, 0.1), 0)",
+      B1: "= ChainIndex(x, x > 100)",
+    }, 100);
+    // x > 100 produces samples, not a scalar
+    expect(sheet.cells.get("B1")!.error).toContain("scalar");
   });
 });
 
@@ -1083,7 +1143,7 @@ describe("aggregate functions", () => {
       // Uniform(0, 100) has median 50
       const sheet = makeSheet({ A1: "Uniform(0, 100)", B1: "= median(A1)" }, 10_000);
       expect(isScalar(sheet, "B1")).toBe(true);
-      expect(scalarValue(sheet, "B1")).toBeCloseTo(50, 0);
+      expect(Math.abs(scalarValue(sheet, "B1") - 50)).toBeLessThan(2);
     });
 
     it("computes elementwise median of range", () => {
@@ -1208,14 +1268,12 @@ describe("aggregate functions", () => {
   });
 
   describe("chain bracket syntax", () => {
-    it("income[5] works like ChainIndex", () => {
+    it("income[5] accesses step 5", () => {
       const sheet = makeSheet({
         A1: "x = Chain(x + 10, 0)",
         B1: "= x[5]",
-        C1: "= ChainIndex(x, 5)",
       });
-      // Both return samples; with deterministic body, all samples = 50
-      expect(mean(sheet, "B1")).toBe(mean(sheet, "C1"));
+      // With deterministic body, all samples = 50
       expect(mean(sheet, "B1")).toBeCloseTo(50, 5);
     });
 

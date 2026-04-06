@@ -587,10 +587,10 @@ class Parser {
       return { type: "chainRange", target, start: first, end };
     }
 
-    // Single index: target[step] → ChainIndex(target, step)
+    // Single index: target[step] — access a specific chain step
     if (this.peek()?.type !== "rbracket") throw new Error("Expected ']' or ':'");
     this.advance();
-    return { type: "funcCall", name: "chainindex", args: [target, first] };
+    return { type: "chainStep", target, step: first };
   }
 
   /** primary = number | cellRef (':' cellRef)? | quotedName '.' ref | ident '.' ref | ident '(' args ')' | ident | '(' expr ')' */
