@@ -1390,13 +1390,13 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
                     const scaleY = pxToVbY / pxToVbX;
                     return <>
                       <pattern id="cmp-stripe-outer" patternUnits="userSpaceOnUse" width={periodX} height="100" patternTransform={`scale(1,${scaleY}) rotate(5)`}>
-                        <rect width={stripeX} height="200" fill="#9a7850" />
+                        <rect width={stripeX} height="200" style={{ fill: "var(--compare-stripe-1)" }} />
                       </pattern>
                       <pattern id="cmp-stripe-inner" patternUnits="userSpaceOnUse" width={periodX} height="100" patternTransform={`scale(1,${scaleY}) rotate(5)`}>
-                        <rect width={stripeX} height="200" fill="#b88830" />
+                        <rect width={stripeX} height="200" style={{ fill: "var(--compare-stripe-2)" }} />
                       </pattern>
                       <pattern id="cmp-stripe-middle" patternUnits="userSpaceOnUse" width={periodX} height="100" patternTransform={`scale(1,${scaleY}) rotate(5)`}>
-                        <rect width={stripeX} height="200" fill="#d89818" />
+                        <rect width={stripeX} height="200" style={{ fill: "var(--compare-stripe-3)" }} />
                       </pattern>
                     </>;
                   })()}

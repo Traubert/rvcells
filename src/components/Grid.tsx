@@ -698,22 +698,7 @@ function CellDisplay({ cell }: { cell: Cell | undefined }) {
   // Distribution result — show mean ± std, color intensity reflects uncertainty
   const stats = summarize(cell.result);
   const uncertainty = uncertaintyFraction(stats.mean, stats.std);
-
-  // Two-stop color ramp: white → warm orange (u=0.5) → angry red (u=1.0)
-  const u = uncertainty;
-  let r_, g_, b_;
-  if (u <= 0.5) {
-    const t = u * 2; // 0→1 over first half
-    r_ = Math.round(232 + (230 - 232) * t);  // e8 → e6
-    g_ = Math.round(232 + (130 - 232) * t);  // e8 → 82
-    b_ = Math.round(248 + (60 - 248) * t);   // f8 → 3c
-  } else {
-    const t = (u - 0.5) * 2; // 0→1 over second half
-    r_ = Math.round(230 + (220 - 230) * t);  // e6 → dc
-    g_ = Math.round(130 + (50 - 130) * t);   // 82 → 32
-    b_ = Math.round(60 + (45 - 60) * t);     // 3c → 2d
-  }
-  const color = `rgb(${r_}, ${g_}, ${b_})`;
+  const color = uncertaintyColor(uncertainty);
 
   return (
     <span className="cell-distribution" style={{ color }} title={`P5: ${formatNumber(stats.p5)} | P95: ${formatNumber(stats.p95)}`}>
@@ -721,6 +706,44 @@ function CellDisplay({ cell }: { cell: Cell | undefined }) {
       <span className="cell-spread" style={{ opacity: 0.3 + 0.7 * uncertainty }}> ±{formatNumber(stats.std)}</span>
     </span>
   );
+}
+
+/**
+ * Two-stop color ramp for cell distribution display, theme-aware:
+ *   dark mode:  white (#e8e8f8) → warm orange → angry red
+ *   light mode: dark gray (#2a2a3a) → warm orange → dark red
+ */
+function uncertaintyColor(u: number): string {
+  const isLight = typeof document !== "undefined" && document.documentElement.dataset.theme === "light";
+  let r_, g_, b_;
+  if (isLight) {
+    // 0: text (#2a2a3a)  →  0.5: orange (#b85a18)  →  1.0: dark red (#8a1a14)
+    if (u <= 0.5) {
+      const t = u * 2;
+      r_ = Math.round(0x2a + (0xb8 - 0x2a) * t);
+      g_ = Math.round(0x2a + (0x5a - 0x2a) * t);
+      b_ = Math.round(0x3a + (0x18 - 0x3a) * t);
+    } else {
+      const t = (u - 0.5) * 2;
+      r_ = Math.round(0xb8 + (0x8a - 0xb8) * t);
+      g_ = Math.round(0x5a + (0x1a - 0x5a) * t);
+      b_ = Math.round(0x18 + (0x14 - 0x18) * t);
+    }
+  } else {
+    // dark mode: white → warm orange (u=0.5) → angry red (u=1.0)
+    if (u <= 0.5) {
+      const t = u * 2;
+      r_ = Math.round(232 + (230 - 232) * t);  // e8 → e6
+      g_ = Math.round(232 + (130 - 232) * t);  // e8 → 82
+      b_ = Math.round(248 + (60 - 248) * t);   // f8 → 3c
+    } else {
+      const t = (u - 0.5) * 2;
+      r_ = Math.round(230 + (220 - 230) * t);  // e6 → dc
+      g_ = Math.round(130 + (50 - 130) * t);   // 82 → 32
+      b_ = Math.round(60 + (45 - 60) * t);     // 3c → 2d
+    }
+  }
+  return `rgb(${r_}, ${g_}, ${b_})`;
 }
 
 /**

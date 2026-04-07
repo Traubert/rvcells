@@ -142,6 +142,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Export to AI agent idea)
 - [ ] Need a more ergonomic way to input large and small numbers
 - [ ] Shift+click to highlight rectangular range of cells, drag&drop selections
+- [ ] Autorange in histogram compare mode could try to fit both distributions?
 
 ### Questions to check out
 
@@ -149,6 +150,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
   - Main hot-path sort is `computeStats` (once per distribution cell per eval, ~0.1ms for 10k samples). `P()`, `median()`, `histogram` also sort copies. Not a bottleneck.
   - Storing sorted would double memory. More importantly, sorted order breaks after any elementwise operation, and sample index correspondence across cells is required for correct arithmetic and correlation analysis. Current approach (sort temporary copies) is correct.
 
+- [ ] Does ChainIndex() work with comparing two chains, ie. at what timestep does chain A's median exceed Chain B's median?
 ## Design Principles
 
 - **Immediate feedback**: recalculation should feel instant. 10k samples through a small DAG should take <10ms.

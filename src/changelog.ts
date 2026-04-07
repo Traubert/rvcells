@@ -29,6 +29,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 18, summary: "Autosave to browser storage on every edit (toggle in Settings)" },
   { version: 19, summary: "Click a step in the Timeline fan chart to inspect its histogram" },
   { version: 20, summary: "ChainIndex(chain, condition) searches for first step where a condition holds" },
+  { version: 21, summary: "Light mode \u2014 auto/dark/light theme toggle in Settings \u2192 Global" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

@@ -20,6 +20,7 @@ import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME } from "./constants";
 import "./App.css";
 
 const AUTOSAVE_KEY = "rvcells:autosave";
+const THEME_KEY = "rvcells:theme";
 
 function getAutosave(): boolean {
   try {
@@ -30,6 +31,31 @@ function getAutosave(): boolean {
 
 function setAutosave(on: boolean) {
   try { localStorage.setItem(AUTOSAVE_KEY, String(on)); } catch {}
+}
+
+export type ThemePref = "auto" | "dark" | "light";
+export type ResolvedTheme = "dark" | "light";
+
+function getThemePref(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v === "dark" || v === "light" || v === "auto") return v;
+  } catch {}
+  return "auto";
+}
+
+function setThemePref(pref: ThemePref) {
+  try { localStorage.setItem(THEME_KEY, pref); } catch {}
+}
+
+function systemTheme(): ResolvedTheme {
+  try {
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch { return "dark"; }
+}
+
+function resolveTheme(pref: ThemePref): ResolvedTheme {
+  return pref === "auto" ? systemTheme() : pref;
 }
 
 type Snapshot = {
@@ -72,6 +98,22 @@ export default function App() {
   const [editNameValue, setEditNameValue] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
   const autosaveRef = useRef(getAutosave());
+  const [themePref, setThemePrefState] = useState<ThemePref>(getThemePref);
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(getThemePref()));
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    setResolvedTheme(resolveTheme(themePref));
+    if (themePref !== "auto") return;
+    let mql: MediaQueryList;
+    try { mql = window.matchMedia("(prefers-color-scheme: light)"); } catch { return; }
+    const handler = (e: MediaQueryListEvent) => setResolvedTheme(e.matches ? "light" : "dark");
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [themePref]);
   const [splash, setSplash] = useState<{ mode: "welcome" | "whats-new" | "changelog"; newEntries: ChangelogEntry[] } | null>(() => {
     const last = getLastSeenVersion();
     if (last === null) return { mode: "welcome", newEntries: [] };
@@ -403,14 +445,18 @@ export default function App() {
   }, [showRenameNotice]);
 
 
-  const handleSettingsSave = useCallback((newSettings: { numSamples: number; chainSearchLimit: number; autosave: boolean }) => {
+  const handleSettingsSave = useCallback((newSettings: { numSamples: number; chainSearchLimit: number; autosave: boolean; theme: ThemePref }) => {
     settingsRef.current = { numSamples: newSettings.numSamples, chainSearchLimit: newSettings.chainSearchLimit };
     autosaveRef.current = newSettings.autosave;
     setAutosave(newSettings.autosave);
+    if (newSettings.theme !== themePref) {
+      setThemePref(newSettings.theme);
+      setThemePrefState(newSettings.theme);
+    }
     recalculateAll(sheetsRef.current, settingsRef.current);
     setSettingsOpen(false);
     commitChange();
-  }, [commitChange]);
+  }, [commitChange, themePref]);
 
   const handleTabSelect = useCallback((index: number) => {
     setActiveIdx(index);
@@ -571,6 +617,7 @@ export default function App() {
           numSamples={settingsRef.current.numSamples}
           chainSearchLimit={settingsRef.current.chainSearchLimit}
           autosave={autosaveRef.current}
+          theme={themePref}
           onSave={handleSettingsSave}
           onClose={() => setSettingsOpen(false)}
         />
