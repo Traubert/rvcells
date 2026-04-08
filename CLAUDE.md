@@ -139,7 +139,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] CellIndex(income, P(income, 10) idea
 - [x] Add missing functions to help panel (median(), P(), sum(), product, ...)
 - [ ] Contribution graph in sensitivity analysis idea
-- [ ] Export to AI agent idea)
+- [ ] Export to AI agent idea
 - [ ] Need a more ergonomic way to input large and small numbers
 - [ ] Shift+click to highlight rectangular range of cells, drag&drop selections
 - [ ] Autorange in histogram compare mode could try to fit both distributions?
