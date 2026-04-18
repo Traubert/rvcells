@@ -126,10 +126,11 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Copy/cut resolved values (Ctrl+Shift+C/X) — scalars as numbers, distributions as mean ± std
 
 ### P3 — advanced
-- [ ] Correlated inputs (specify correlation between distribution cells)
-- [ ] Custom distributions (empirical, from pasted data)
+- [ ] Correlated inputs via Iman-Conover method: user specifies a rank-correlation matrix between distribution cells; Cholesky decomposition permutes existing sample arrays to induce the target correlation while preserving marginals exactly. Works with any distribution since it operates on ranks, not parametric CDFs. Limitation: rank correlation captures monotonic dependencies only (no tail dependence).
+- [ ] Distribution fitting helper: paste a column of data, see candidate fits (Normal, LogNormal, etc.) with goodness-of-fit scores, pick one → writes the distribution spec into the cell. Scoped as a parameterization convenience, not multivariate modeling — fitted marginals are independent, so real-world correlations between inputs are lost unless the user also specifies a correlation structure.
+- [ ] Markov chain fitting from data: given a time series, infer HMM parameters (Baum-Welch / EM) and state count. Research-level difficulty for model selection (how many states?), but even a fixed-state-count fitter would be useful.
 - [ ] Multiple scenarios / side-by-side comparison
-- [ ] Shareable via URL (encode state in URL or use a paste service)
+- [ ] Shareable via URL: gzip the existing JSON export, base64url-encode, put in fragment hash (`#data=<encoded>`). Small models fit directly; for larger ones, a gist-based flow (client-side POST to GitHub API, no backend) gives short shareable URLs with arbitrary payload size.
 
 ### Additional TODOs
 
