@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, DEFAULT_SETTINGS } from "./evaluate";
+import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, histogram, DEFAULT_SETTINGS } from "./evaluate";
 import type { Sheet, WorkbookSettings } from "./types";
 import { parseCell } from "./parser";
 
@@ -1307,6 +1307,26 @@ describe("aggregate functions", () => {
     it("chain range with negative start errors", () => {
       const sheet = makeSheet({ A1: "x = Chain(x + 1, 0)", B1: "= sum(x[-1:5])" });
       expect(sheet.cells.get("B1")!.error).toMatch(/Invalid/i);
+    });
+  });
+
+  describe("histogram", () => {
+    it("does not drop the right spike when snapping shifts the range left", () => {
+      // Reproducer: 3300 + if(Bernoulli(.5), 2300/12, 0) — two atoms at 3300 and 3491.67.
+      // The old snap set snappedMin = floor(3300 / binWidth) * binWidth = 3298.58
+      // and snappedMax = snappedMin + range = 3490.25, so samples at 3491.67 fell
+      // outside snappedMax and were skipped, leaving only the left spike visible.
+      const n = 10_000;
+      const vals = new Float64Array(n);
+      for (let i = 0; i < n; i++) vals[i] = 3300 + (i % 2 === 0 ? 2300 / 12 : 0);
+      const h = histogram({ kind: "samples", values: vals }, 100);
+      const total = h.bins.reduce((a, b) => a + b, 0);
+      expect(total).toBe(n);
+      // Both spikes must land in separate bins.
+      const nonEmpty = h.bins.filter((c) => c > 0).length;
+      expect(nonEmpty).toBe(2);
+      expect(h.bins[0]).toBe(n / 2);
+      expect(h.bins[h.bins.length - 1]).toBe(n / 2);
     });
   });
 });

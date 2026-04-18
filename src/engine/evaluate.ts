@@ -2453,15 +2453,17 @@ export function histogram(
 
   const binWidth = (max - min) / numBins;
   // Snap bin edges to a stable grid so panning doesn't shuffle samples between bins.
-  // Align min down and max up to the nearest multiple of binWidth.
+  // Align min down and max up — snapping both ends may widen the range by up to
+  // one bin, so the final bin count is numBins or numBins+1.
   const snappedMin = Math.floor(min / binWidth) * binWidth;
-  const snappedMax = snappedMin + numBins * binWidth;
+  const snappedMax = Math.ceil(max / binWidth) * binWidth;
+  const actualNumBins = Math.max(1, Math.round((snappedMax - snappedMin) / binWidth));
 
-  const bins = new Array(numBins).fill(0);
+  const bins = new Array(actualNumBins).fill(0);
   for (let i = 0; i < vals.length; i++) {
     if (vals[i] < snappedMin || vals[i] > snappedMax) continue;
     let bin = Math.floor((vals[i] - snappedMin) / binWidth);
-    if (bin >= numBins) bin = numBins - 1;
+    if (bin >= actualNumBins) bin = actualNumBins - 1;
     bins[bin]++;
   }
 
