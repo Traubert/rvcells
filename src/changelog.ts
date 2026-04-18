@@ -30,6 +30,8 @@ export const changelog: ChangelogEntry[] = [
   { version: 19, summary: "Click a step in the Timeline fan chart to inspect its histogram" },
   { version: 20, summary: "ChainIndex(chain, condition) searches for first step where a condition holds" },
   { version: 21, summary: "Light mode \u2014 auto/dark/light theme toggle in Settings \u2192 Global" },
+  { version: 22, summary: "Sobol and Effect sizes tabs in the detail panel; pick any inputs from the dependency graph" },
+  { version: 23, summary: "Cut-deepener: collapse leaf inputs into their shared intermediate (\u2212/+ buttons next to grouped rows)" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

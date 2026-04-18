@@ -1795,7 +1795,8 @@ thead .row-header {
 .sens-label-col,
 .tornado-label-col {
   width: 30%;
-  text-align: left;
+  text-align: right;
+  padding-right: 8px;
 }
 
 .sens-bar-col,
@@ -1816,7 +1817,16 @@ thead .row-header {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
+  max-width: 180px;
+  text-align: right;
+  padding-right: 0;
+}
+
+/* Inline-block wrapper around the label content so the hover highlight
+ * shrink-wraps to the actual text + button rather than spanning the whole TD. */
+.input-label-inner {
+  display: inline-block;
+  padding: 0 8px 0 6px;
 }
 
 .sens-value,
@@ -1930,82 +1940,147 @@ thead .row-header {
   opacity: 0.6;
 }
 
-/* Merge controls (cut-deepener) */
-.merge-controls {
-  display: flex;
-  flex-wrap: wrap;
+/* Merge group color palette — 5 distinct hues for cut-deepener groups */
+:root {
+  --merge-c0: #5aa5c8;
+  --merge-c1: #d89850;
+  --merge-c2: #c36d9c;
+  --merge-c3: #8ab044;
+  --merge-c4: #b88acc;
+}
+
+[data-theme="light"] {
+  --merge-c0: #2f7ea2;
+  --merge-c1: #a36418;
+  --merge-c2: #9b3e74;
+  --merge-c3: #5a8520;
+  --merge-c4: #7650a0;
+}
+
+/* Each merge group binds its colour to a single inherited variable.
+ * Buttons and hover backgrounds inside the row read from --merge-c. */
+.merge-c-0 { --merge-c: var(--merge-c0); }
+.merge-c-1 { --merge-c: var(--merge-c1); }
+.merge-c-2 { --merge-c: var(--merge-c2); }
+.merge-c-3 { --merge-c: var(--merge-c3); }
+.merge-c-4 { --merge-c: var(--merge-c4); }
+
+/* Hover highlight — lights up every row in the same group at once.
+ * For the label TD, only the inner span (shrink-wrapped to text+button width) is tinted,
+ * so the empty space to the left of right-aligned labels stays uncoloured. */
+.merge-hover td:not(.sens-label):not(.tornado-label),
+.merge-hover .input-label-inner {
+  background: color-mix(in srgb, var(--merge-c) 18%, transparent);
+}
+
+/* Inline merge/split button, rendered after the label and sitting next to the bar */
+.merge-btn-inline {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-}
-
-.merge-controls-label {
-  color: var(--text-dim);
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0;
   font-family: var(--font-ui);
-}
-
-.merge-btn {
-  font-size: 11px;
-  font-family: var(--font-ui);
-  padding: 2px 8px;
-  background: var(--recessed-bg-soft);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.merge-btn:hover {
-  background: var(--accent);
-  color: var(--bg);
-}
-
-.merge-expand-btn {
-  font-size: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
   background: transparent;
-  border: none;
-  color: var(--text-dim);
+  border: 1px solid currentColor;
+  border-radius: 2px;
   cursor: pointer;
-  padding: 0 3px 0 0;
   vertical-align: middle;
+  opacity: 0.85;
 }
 
-.merge-expand-btn:hover {
-  color: var(--text-bright);
+.merge-btn-inline:hover {
+  opacity: 1;
+  background: var(--hover-overlay-mid);
 }
 
-/* Sobol / Regression input picker */
+/* The button picks up its colour from the row's --merge-c (set by .merge-c-N). */
+.merge-btn-inline {
+  color: var(--merge-c, var(--text));
+}
+
+/* Sobol / Regression input picker
+ *
+ * The picker container is absolutely positioned so it doesn't contribute its
+ * intrinsic height to the parent's flex layout — that means the parent's
+ * height is driven entirely by the results sibling (or by the resize handle
+ * when the user has dragged the panel taller). The picker then fills whatever
+ * height the parent ends up with.
+ *
+ * In unresized mode the parent gets a 280px min-height so a long picker has
+ * a sensible baseline scroll area when the results sibling is shorter. */
 .picker-and-results {
   display: flex;
   flex: 1;
   min-height: 0;
   gap: 8px;
+  position: relative;
+}
+
+.detail-panel:not(.detail-panel-resized) .picker-and-results {
+  min-height: 280px;
 }
 
 .picker-container {
-  flex: 0 0 160px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 160px;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: 280px;
   border-right: 1px solid var(--border);
   padding-right: 8px;
 }
 
-.detail-panel-resized .picker-container {
-  max-height: none;
+.picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0 4px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  flex-shrink: 0;
+  gap: 4px;
 }
 
 .picker-label {
   font-family: var(--font-ui);
   font-size: 11px;
   color: var(--text-dim);
-  padding: 2px 0 4px 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-  flex-shrink: 0;
+}
+
+.picker-bulk {
+  display: flex;
+  gap: 2px;
+}
+
+.picker-bulk-btn {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  padding: 1px 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.picker-bulk-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-overlay-soft);
+  border-color: var(--text-dim);
+}
+
+.picker-bulk-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .picker-list {
@@ -2015,33 +2090,52 @@ thead .row-header {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
+/* Toggle button for each input — pressed state shows it's selected. */
 .picker-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: block;
+  width: 100%;
+  flex: 0 0 auto;
+  text-align: left;
+  font-family: var(--font-mono);
   font-size: 12px;
+  line-height: 1.5;
+  height: auto;
+  padding: 3px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: var(--text-dim);
   cursor: pointer;
-  padding: 1px 0;
-}
-
-.picker-row input[type="checkbox"] {
-  margin: 0;
-  cursor: pointer;
-}
-
-.picker-row-label {
-  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  appearance: none;
+}
+
+.picker-row:hover {
+  background: var(--hover-overlay-soft);
+  color: var(--text);
+}
+
+.picker-row-selected {
+  background: var(--detail-tab-active-bg);
+  border-color: var(--accent-dim);
+  color: var(--text-bright);
+}
+
+.picker-row-selected:hover {
+  background: var(--detail-tab-active-bg);
+  border-color: var(--accent);
 }
 
 .picker-results {
   flex: 1;
   display: flex;
   flex-direction: column;
+  margin-left: 168px;
 }
 
 .picker-footer,

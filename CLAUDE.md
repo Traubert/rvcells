@@ -22,7 +22,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
 - `src/components/Grid.tsx` — spreadsheet grid UI, keyboard navigation, formula bar
-- `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls, sensitivity tabs (Correlation, Variance, Tornado, Sobol, Regression with input picker, auto cut-deepener merge controls), Chain timeline fan chart
+- `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls, sensitivity tabs (Correlation, Tornado, Sobol, Effect sizes with input picker, auto cut-deepener merge controls), Chain timeline fan chart
 - `src/components/OpenDialog.tsx` — browser storage open/delete dialog
 - `src/components/TabBar.tsx` — sheet tab bar with add/close/rename
 - `src/components/ConfirmDialog.tsx` — reusable confirmation dialog
@@ -101,14 +101,13 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 
 ### P1 — analysis
 - [x] Correlation tab: Spearman rank correlation of each distribution input with the output
-- [x] Variance tab: r² variance contribution for each input
 - [x] Tornado tab: one-at-a-time P5/P95 sweep with directional coloring (green=input high, red=input low)
 - [x] Inline distribution sample capture for sensitivity analysis of formulas with embedded distributions (including Chain body)
 - [x] Deterministic mode for tornado evaluation (distribution constructors return expected values)
 - [x] Percentile display (P5, P25, P50, P75, P95) in the detail panel
-- [x] Auto cut-deepener: collapse leaf inputs into a shared intermediate when no double-counting can result; affects Correlation/Variance/Tornado tabs together
+- [x] Auto cut-deepener: collapse leaf inputs into a shared intermediate when no double-counting can result; affects Correlation/Tornado tabs together
 - [x] Sobol tab: first-order Sobol indices Var[E[Y|X]]/Var[Y] with arbitrary input picker (overlapping selections allowed)
-- [x] Regression tab: standardized β coefficients and partial r² with arbitrary input picker; collinearity detection
+- [x] Effect sizes tab: standardized β coefficients and partial r² from a multivariate linear fit, with arbitrary input picker; collinearity detection
 
 ### P2 — usability
 - [x] Import/export spreadsheet as JSON file (browser download/upload)

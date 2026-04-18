@@ -428,7 +428,7 @@ This means `min(max(A1, A2, A3))` first computes the elementwise max of three di
 
 ## Analysis views
 
-When you click on a distribution cell that contains a formula, the detail panel shows four tabs:
+When you click on a distribution cell that contains a formula, the detail panel shows several tabs.
 
 ### Distribution
 
@@ -436,7 +436,7 @@ The default view — histogram, summary statistics (mean, std dev, percentiles),
 
 ### Correlation
 
-Shows the **Spearman rank correlation coefficient** between each distribution input and the output cell. This answers: "when this input is high, does the output tend to be high or low?"
+Shows the **Spearman rank correlation coefficient** `r` between each distribution input and the output cell. This answers: "when this input is high, does the output tend to be high or low?"
 
 - Inputs are the leaf distribution sources in the formula's dependency chain — the cells where randomness originates
 - Sorted by absolute correlation (most influential first)
@@ -446,13 +446,6 @@ Shows the **Spearman rank correlation coefficient** between each distribution in
 - Scalar inputs are excluded (they have no rank variation)
 
 Inputs are labelled with their variable name if they have one, or their cell address. Inline distributions (like `Normal(100, 10)` written directly in the formula) are also detected and analysed.
-
-### Variance
-
-Shows the **variance contribution** (r²) of each input — what fraction of the output's variance is explained by each input. This is the square of the rank correlation.
-
-- Sorted by contribution (largest first)
-- Scalar inputs are shown with zero-width bars and "(scalar)" label for context
 
 ### Tornado
 
@@ -466,6 +459,39 @@ A proper **tornado diagram**: for each distribution input, the output is evaluat
 - The "Swing" column shows the total range
 
 For inputs that have a negative effect (e.g. a cost subtracted from revenue), the colours reverse: green appears on the left (input low → output high) and red on the right.
+
+### Sobol
+
+Shows the **first-order Sobol index** `S₁ = Var[E[Y|X]] / Var[Y]` for each selected input — the fraction of the output's variance that would vanish if you knew that input exactly. This is a nonparametric measure: it works for nonlinear formulas and doesn't assume any particular relationship between input and output.
+
+Unlike the Correlation and Tornado tabs (which show every leaf source by default), the Sobol tab has an **input picker** on the left. You can check or uncheck any cell in the output's dependency chain — leaves, intermediates, anything with sample-array values. Use the **All** / **None** buttons above the picker to bulk-toggle.
+
+Selections are allowed to overlap. If you pick `subtotal` and `contingency` (where contingency is computed from subtotal), both will independently score high — and their indices may sum to more than 100%. That's not an error: it tells you the two inputs share information.
+
+### Effect sizes
+
+Fits a multivariate linear regression `y ~ β₁x₁ + β₂x₂ + …` to the chosen inputs and shows two numbers per input:
+
+- **Standardised β** — signed effect size: how many σ of the output the input moves, holding the others fixed. Sign indicates direction.
+- **Partial r²** — the fraction of output variance this input *uniquely* explains, beyond what every other selected input also explains.
+
+Three summary lines at the bottom report:
+
+- **Uniquely explained** — sum of partial r² values
+- **Shared (overlap)** — model R² minus the sum of partial r²s, the variance jointly explained by correlated predictors
+- **Unexplained (nonlinear)** — 1 − R², the variance the linear model can't capture
+
+If the selected inputs are perfectly collinear, a warning appears and the coefficients are zeroed out. The Effect sizes tab shares its input picker with the Sobol tab — switching between them preserves your selection.
+
+### Cut-deepener (collapsing inputs)
+
+By default the Correlation and Tornado tabs show all the **leaves** of the dependency graph — the cells where randomness originates. For a model like `total = subtotal + contingency`, where `subtotal = D3 + D4 + D5 + D6 + D7`, you'd see five rows for `D3..D7` and never the `subtotal` line you actually think about.
+
+When the analysis can be safely simplified, a small coloured **−** button appears next to a group of inputs — and hovering any one highlights the entire group in the same colour. Click the button to collapse the group into its intermediate (e.g. `D3..D7` becomes a single `subtotal` row). The merged row shows a **+** button you can click to undo.
+
+A merge is offered only when it preserves the existing decomposition: every leaf in the group must funnel through the intermediate without any other path to the output. This guarantees that no variance is double-counted and that the new row contributes the same total as the rows it replaced. The Correlation, Tornado and dependency-graph views all share the same collapse state for a given output cell.
+
+The Sobol and Effect sizes tabs aren't subject to this restriction — their input pickers let you choose any combination of leaves and intermediates, and the math handles overlap explicitly.
 
 ## Copy, cut, and paste
 

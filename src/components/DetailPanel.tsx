@@ -69,14 +69,30 @@ function useRepeatAction(action: (step: number) => void) {
   return { onMouseDown: start, onMouseUp: stop, onMouseLeave: stop };
 }
 
-type DetailTab = "distribution" | "correlation" | "variance" | "tornado" | "sobol" | "regression" | "timeline";
+type DetailTab = "distribution" | "correlation" | "tornado" | "sobol" | "regression" | "timeline";
 
 const EMPTY_SET: Set<string> = new Set();
+const EMPTY_HISTORY: Map<string, string[]> = new Map();
+
+/** Number of distinct colors in the merge-group palette (see App.css). */
+const MERGE_GROUP_COLORS = 5;
+
+/** Stable color index for a target GA — same GA always maps to the same color,
+ *  so merged rows retain the colour they had before being collapsed.
+ *  Colours collide gracefully when there are more than MERGE_GROUP_COLORS groups. */
+function mergeColorIndex(targetGA: string): number {
+  let h = 0;
+  for (let i = 0; i < targetGA.length; i++) h = (h * 31 + targetGA.charCodeAt(i)) | 0;
+  return Math.abs(h) % MERGE_GROUP_COLORS;
+}
 
 /** Per-output-cell sensitivity selection state. */
 interface CellSensitivityState {
   /** Set of GAs (e.g. "0:A1") of intermediate cells the user has merged in. */
   merged: Set<string>;
+  /** For each merged intermediate GA, the labels of the leaves that were collapsed
+   *  (for the "Split into A, B, C" tooltip on the corresponding expand button). */
+  mergeHistory: Map<string, string[]>;
   /** Set of GAs of cells the user has chosen as inputs in the Sobol/Regression picker.
    *  Undefined means "use default selection" (the same set as the leaf inputs of the existing tabs). */
   pickerSelection?: Set<string>;
@@ -122,24 +138,35 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
   const outputGA = `${sheetIndex}:${addr}`;
   const sensState = sensStateByCell.get(outputGA);
   const stopSet = sensState?.merged ?? EMPTY_SET;
+  const mergeHistory = sensState?.mergeHistory ?? EMPTY_HISTORY;
 
   const updateSensState = useCallback((updater: (prev: CellSensitivityState) => CellSensitivityState) => {
     setSensStateByCell(prev => {
       const next = new Map(prev);
-      const cur = prev.get(outputGA) ?? { merged: new Set<string>() };
+      const cur = prev.get(outputGA) ?? { merged: new Set<string>(), mergeHistory: new Map<string, string[]>() };
       next.set(outputGA, updater(cur));
       return next;
     });
   }, [outputGA]);
 
-  const onMerge = useCallback((targetGA: string) => {
-    updateSensState(prev => ({ ...prev, merged: new Set([...prev.merged, targetGA]) }));
+  const onMerge = useCallback((candidate: MergeCandidate) => {
+    const targetGA = `${candidate.target.sheetIndex}:${candidate.target.addr}`;
+    const memberLabels = candidate.mergedLeaves.map(l => l.label);
+    updateSensState(prev => {
+      const nextMerged = new Set(prev.merged);
+      nextMerged.add(targetGA);
+      const nextHistory = new Map(prev.mergeHistory);
+      nextHistory.set(targetGA, memberLabels);
+      return { ...prev, merged: nextMerged, mergeHistory: nextHistory };
+    });
   }, [updateSensState]);
   const onExpand = useCallback((targetGA: string) => {
     updateSensState(prev => {
-      const next = new Set(prev.merged);
-      next.delete(targetGA);
-      return { ...prev, merged: next };
+      const nextMerged = new Set(prev.merged);
+      nextMerged.delete(targetGA);
+      const nextHistory = new Map(prev.mergeHistory);
+      nextHistory.delete(targetGA);
+      return { ...prev, merged: nextMerged, mergeHistory: nextHistory };
     });
   }, [updateSensState]);
   const onPickerChange = useCallback((selection: Set<string>) => {
@@ -157,7 +184,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
   useEffect(() => { setCompareRef(""); setCompareInput(null); }, [addr]);
   useEffect(() => {
     if (!isChain && activeTab === "timeline") setActiveTab("distribution");
-    if (!hasSensitivityTabs && (activeTab === "correlation" || activeTab === "variance" || activeTab === "tornado" || activeTab === "sobol" || activeTab === "regression")) setActiveTab("distribution");
+    if (!hasSensitivityTabs && (activeTab === "correlation" || activeTab === "tornado" || activeTab === "sobol" || activeTab === "regression")) setActiveTab("distribution");
   }, [isChain, hasSensitivityTabs, activeTab]);
   const compareInputRef = useRef<HTMLInputElement>(null);
   const [binCount, setBinCount] = useState(DEFAULT_NUM_HISTOGRAM_BINS);
@@ -474,12 +501,6 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
                 Correlation
               </button>
               <button
-                className={`detail-tab ${activeTab === "variance" ? "detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("variance")}
-              >
-                Variance
-              </button>
-              <button
                 className={`detail-tab ${activeTab === "tornado" ? "detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("tornado")}
               >
@@ -495,7 +516,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
                 className={`detail-tab ${activeTab === "regression" ? "detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("regression")}
               >
-                Regression
+                Effect sizes
               </button>
             </>}
             {isChain && (
@@ -703,18 +724,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
           sheetIndex={sheetIndex}
           addr={addr}
           stopSet={stopSet}
-          onMerge={onMerge}
-          onExpand={onExpand}
-        />
-      )}
-
-      {activeTab === "variance" && isFormula && (
-        <VarianceView
-          outputResult={result}
-          allSheets={allSheets}
-          sheetIndex={sheetIndex}
-          addr={addr}
-          stopSet={stopSet}
+          mergeHistory={mergeHistory}
           onMerge={onMerge}
           onExpand={onExpand}
         />
@@ -728,6 +738,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
           outputResult={result}
           settings={settings}
           stopSet={stopSet}
+          mergeHistory={mergeHistory}
           onMerge={onMerge}
           onExpand={onExpand}
         />
@@ -778,7 +789,8 @@ interface AnalysisViewProps {
   sheetIndex: number;
   addr: string;
   stopSet: Set<string>;
-  onMerge: (targetGA: string) => void;
+  mergeHistory: Map<string, string[]>;
+  onMerge: (candidate: MergeCandidate) => void;
   onExpand: (targetGA: string) => void;
 }
 
@@ -787,68 +799,95 @@ function inputGA(inp: SensitivityInput): string {
   return `${inp.sheetIndex}:${inp.addr}`;
 }
 
-/** Render the available merge buttons for the current input list. */
-function MergeControls({
-  candidates,
-  onMerge,
-}: {
-  candidates: MergeCandidate[];
-  onMerge: (targetGA: string) => void;
-}) {
-  if (candidates.length === 0) return null;
-  return (
-    <div className="merge-controls">
-      <span className="merge-controls-label">Merge:</span>
-      {candidates.map((c) => {
-        const ga = inputGA(c.target);
-        const leafLabels = c.mergedLeaves.map((l) => l.label).join(", ");
-        return (
-          <button
-            key={ga}
-            className="merge-btn"
-            title={`Collapse ${leafLabels} into ${c.target.label}`}
-            onClick={() => onMerge(ga)}
-          >
-            ▲ {c.target.label}
-          </button>
-        );
-      })}
-    </div>
-  );
+/** Index candidates by leaf GA → the candidate that would collapse that leaf. */
+function indexCandidatesByLeaf(candidates: MergeCandidate[]): Map<string, MergeCandidate> {
+  const m = new Map<string, MergeCandidate>();
+  for (const c of candidates) {
+    for (const leaf of c.mergedLeaves) m.set(inputGA(leaf), c);
+  }
+  return m;
 }
 
-/** A label cell that shows an "expand" affordance for merged inputs. */
+/** Join a list using "A", "A and B", "A, B and C" etc. */
+function conjoin(items: string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** Build the TR className combining the row's group colour (always-on) and the
+ *  hover-highlight (only when the user is pointing at a member of the same group). */
+function rowMergeClass(
+  candidate: MergeCandidate | undefined,
+  isMerged: boolean,
+  rowGA: string,
+  hoveredTargetGA: string | null,
+): string {
+  let groupTargetGA: string | null = null;
+  if (candidate) groupTargetGA = inputGA(candidate.target);
+  else if (isMerged) groupTargetGA = rowGA;
+  if (!groupTargetGA) return "";
+  const cls = `merge-c-${mergeColorIndex(groupTargetGA)}`;
+  return groupTargetGA === hoveredTargetGA ? `${cls} merge-hover` : cls;
+}
+
+/** A label cell that shows:
+ *   - a colour-coded "−" button after the label if the row belongs to a mergeable group
+ *     (tooltip: "Collapse A and B into C" / "Collapse A, B and C into D")
+ *   - a colour-coded "+" button after the label if the row is a merged intermediate
+ *     (tooltip: "Split C back into A and B")
+ *   - otherwise just the label. */
 function InputLabel({
   inp,
-  isMerged,
+  candidate,
+  mergedMembers,
+  onMerge,
   onExpand,
   className = "sens-label",
   extraTag,
 }: {
   inp: SensitivityInput;
-  isMerged: boolean;
+  candidate?: MergeCandidate;
+  mergedMembers?: string[];
+  onMerge: (c: MergeCandidate) => void;
   onExpand: (ga: string) => void;
   className?: string;
   extraTag?: React.ReactNode;
 }) {
+  let button: React.ReactNode = null;
+  if (candidate) {
+    const leafList = conjoin(candidate.mergedLeaves.map(l => l.label));
+    button = (
+      <button
+        className="merge-btn-inline"
+        title={`Collapse ${leafList} into ${candidate.target.label}`}
+        onClick={() => onMerge(candidate)}
+      >−</button>
+    );
+  } else if (mergedMembers) {
+    const memberList = conjoin(mergedMembers);
+    button = (
+      <button
+        className="merge-btn-inline"
+        title={`Split ${inp.label} back into ${memberList}`}
+        onClick={() => onExpand(inputGA(inp))}
+      >+</button>
+    );
+  }
+
   return (
     <td className={className} title={inp.detail}>
-      {isMerged && (
-        <button
-          className="merge-expand-btn"
-          title={`Expand ${inp.label} back to its leaves`}
-          onClick={() => onExpand(inputGA(inp))}
-        >
-          ▼
-        </button>
-      )}
-      {inp.label}
-      {extraTag}
+      <span className="input-label-inner">
+        {inp.label}
+        {extraTag}
+        {button}
+      </span>
     </td>
   );
 }
 
-function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, onMerge, onExpand }: AnalysisViewProps) {
+function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, mergeHistory, onMerge, onExpand }: AnalysisViewProps) {
   const inputs = useMemo(
     () => collectInputs(addr, sheetIndex, allSheets, stopSet),
     [addr, sheetIndex, allSheets, outputResult, stopSet]
@@ -857,6 +896,8 @@ function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, o
     () => findMergeCandidates(addr, sheetIndex, allSheets, inputs),
     [addr, sheetIndex, allSheets, inputs]
   );
+  const candidateByLeaf = useMemo(() => indexCandidatesByLeaf(candidates), [candidates]);
+  const [hoveredTarget, setHoveredTarget] = useState<string | null>(null);
 
   const correlations = useMemo(() => {
     if (outputResult.kind !== "samples") return [];
@@ -879,7 +920,6 @@ function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, o
 
   return (
     <div className="detail-body">
-      <MergeControls candidates={candidates} onMerge={onMerge} />
       <div className="analysis-scroll">
         <table className="sensitivity-table">
           <thead>
@@ -889,14 +929,26 @@ function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, o
               <th className="sens-value-col">r</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody onMouseLeave={() => setHoveredTarget(null)}>
             {correlations.map((c, i) => {
               const pct = (Math.abs(c.correlation) / maxAbs) * 50;
               const isPositive = c.correlation >= 0;
               const ga = inputGA(c);
+              const candidate = candidateByLeaf.get(ga);
+              const mergedMembers = stopSet.has(ga) ? mergeHistory.get(ga) ?? [] : undefined;
               return (
-                <tr key={`cell-${i}`}>
-                  <InputLabel inp={c} isMerged={stopSet.has(ga)} onExpand={onExpand} />
+                <tr
+                  key={`cell-${i}`}
+                  className={rowMergeClass(candidate, !!mergedMembers, ga, hoveredTarget) || undefined}
+                  onMouseEnter={() => setHoveredTarget(candidate ? inputGA(candidate.target) : null)}
+                >
+                  <InputLabel
+                    inp={c}
+                    candidate={candidate}
+                    mergedMembers={mergedMembers}
+                    onMerge={onMerge}
+                    onExpand={onExpand}
+                  />
                   <td className="sens-bar-cell">
                     <div className="sens-bar-track">
                       <div
@@ -919,10 +971,8 @@ function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, o
         </table>
         <div className="tab-footer">
           <div className="tab-footnote">
-            Spearman's <strong>r</strong> measures how monotonically each input moves with the output.
-            Sign indicates direction (+ rises together, − moves opposite); magnitude indicates strength.
-            Each input is measured independently, so correlated inputs may both score high even when
-            they're explaining the same variance — for partitioned views, see <strong>Sobol</strong> or <strong>Regression</strong>.
+            Spearman's rank correlation <strong>r</strong> between each input and the output.
+            Sign indicates direction; magnitude indicates strength.
           </div>
         </div>
       </div>
@@ -930,96 +980,9 @@ function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, o
   );
 }
 
-// ─── Tornado view ────────────────────────────────────────────────────
+// ─── Tornado view (±1σ one-at-a-time) ──────────────────────────────
 
-function VarianceView({ outputResult, allSheets, sheetIndex, addr, stopSet, onMerge, onExpand }: AnalysisViewProps) {
-  const inputs = useMemo(
-    () => collectInputs(addr, sheetIndex, allSheets, stopSet),
-    [addr, sheetIndex, allSheets, outputResult, stopSet]
-  );
-  const candidates = useMemo(
-    () => findMergeCandidates(addr, sheetIndex, allSheets, inputs),
-    [addr, sheetIndex, allSheets, inputs]
-  );
-
-  const contributions = useMemo(() => {
-    if (outputResult.kind !== "samples") return [];
-    return inputs
-      .map((inp) => {
-        if (inp.isScalar || inp.result.kind !== "samples") {
-          return { ...inp, contribution: 0 };
-        }
-        const r = spearmanCorrelation(inp.result.values, outputResult.values);
-        return { ...inp, contribution: r * r };
-      })
-      .sort((a, b) => b.contribution - a.contribution);
-  }, [inputs, outputResult]);
-
-  if (contributions.length === 0) {
-    return <div className="detail-body"><span className="detail-empty">No inputs found</span></div>;
-  }
-
-  const maxContrib = Math.max(...contributions.map((c) => c.contribution), 0.01);
-
-  return (
-    <div className="detail-body">
-      <MergeControls candidates={candidates} onMerge={onMerge} />
-      <div className="analysis-scroll">
-        <table className="tornado-table">
-          <thead>
-            <tr>
-              <th className="tornado-label-col">Input</th>
-              <th className="tornado-bar-col">Variance contribution</th>
-              <th className="tornado-value-col">r²</th>
-            </tr>
-          </thead>
-          <tbody>
-            {contributions.map((c, i) => {
-              const pct = (c.contribution / maxContrib) * 100;
-              const ga = inputGA(c);
-              return (
-                <tr key={`${i}`} className={c.isScalar ? "tornado-scalar" : ""}>
-                  <InputLabel
-                    inp={c}
-                    isMerged={stopSet.has(ga)}
-                    onExpand={onExpand}
-                    className="tornado-label"
-                    extraTag={c.isScalar ? <span className="tornado-scalar-tag"> (scalar)</span> : null}
-                  />
-                  <td className="tornado-bar-cell">
-                    {!c.isScalar && (
-                      <div className="tornado-bar-track">
-                        <div
-                          className="tornado-bar variance-bar"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    )}
-                  </td>
-                  <td className="tornado-value">
-                    {c.isScalar ? "—" : c.contribution.toFixed(3)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <div className="tab-footer">
-          <div className="tab-footnote">
-            <strong>r²</strong> is the squared rank correlation, often read as the fraction of output variance
-            explained by each input. Each input is measured independently against the output, so contributions
-            from correlated inputs do <em>not</em> partition cleanly and may sum to more than 100%.
-            For a properly partitioned view, see the <strong>Regression</strong> tab (linear) or <strong>Sobol</strong> tab (nonparametric).
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Tornado view (proper: ±1σ one-at-a-time) ───────────────────────
-
-function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stopSet, onMerge, onExpand }: { allSheets: Sheet[]; sheetIndex: number; addr: string; outputResult: import("../engine/types").CellResult; settings: WorkbookSettings; stopSet: Set<string>; onMerge: (ga: string) => void; onExpand: (ga: string) => void }) {
+function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stopSet, mergeHistory, onMerge, onExpand }: { allSheets: Sheet[]; sheetIndex: number; addr: string; outputResult: import("../engine/types").CellResult; settings: WorkbookSettings; stopSet: Set<string>; mergeHistory: Map<string, string[]>; onMerge: (c: MergeCandidate) => void; onExpand: (ga: string) => void }) {
   const bars = useMemo(
     () => computeTornado(addr, sheetIndex, allSheets, settings, stopSet),
     [addr, sheetIndex, allSheets, outputResult, settings, stopSet]
@@ -1032,7 +995,9 @@ function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stop
     () => findMergeCandidates(addr, sheetIndex, allSheets, inputs),
     [addr, sheetIndex, allSheets, inputs]
   );
-  // Build label → input map for resolving expand affordance on tornado bars
+  const candidateByLeaf = useMemo(() => indexCandidatesByLeaf(candidates), [candidates]);
+  const [hoveredTarget, setHoveredTarget] = useState<string | null>(null);
+  // Build label → input map for resolving merge/expand affordance on tornado bars
   const inputByLabel = useMemo(() => {
     const m = new Map<string, SensitivityInput>();
     for (const inp of inputs) m.set(inp.label, inp);
@@ -1057,7 +1022,6 @@ function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stop
 
   return (
     <div className="detail-body">
-      <MergeControls candidates={candidates} onMerge={onMerge} />
       <div className="analysis-scroll">
         <table className="tornado-table">
           <thead>
@@ -1067,7 +1031,7 @@ function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stop
               <th className="tornado-value-col">Swing</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody onMouseLeave={() => setHoveredTarget(null)}>
             {bars.map((b, i) => {
               const baselinePct = ((baseline - globalMin) / span) * 100;
               // "Input low" segment: from baseline to outputAtLow (red = input went down)
@@ -1090,21 +1054,30 @@ function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stop
               const barRightPct = Math.max(lowLeftPct + lowWidthPct, highLeftPct + highWidthPct);
               const barTotalWidthPct = barRightPct - barLeftPct;
               const matchedInput = inputByLabel.get(b.label);
-              const isMerged = matchedInput ? stopSet.has(inputGA(matchedInput)) : false;
+              const matchedGA = matchedInput ? inputGA(matchedInput) : null;
+              const candidate = matchedGA ? candidateByLeaf.get(matchedGA) : undefined;
+              const mergedMembers = matchedGA && stopSet.has(matchedGA) ? mergeHistory.get(matchedGA) ?? [] : undefined;
+              const mergeClass = matchedGA
+                ? rowMergeClass(candidate, !!mergedMembers, matchedGA, hoveredTarget)
+                : "";
               return (
-                <tr key={i}>
-                  <td className="tornado-label" title={b.detail}>
-                    {isMerged && matchedInput && (
-                      <button
-                        className="merge-expand-btn"
-                        title={`Expand ${b.label} back to its leaves`}
-                        onClick={() => onExpand(inputGA(matchedInput))}
-                      >
-                        ▼
-                      </button>
-                    )}
-                    {b.label}
-                  </td>
+                <tr
+                  key={i}
+                  className={mergeClass || undefined}
+                  onMouseEnter={() => setHoveredTarget(candidate ? inputGA(candidate.target) : null)}
+                >
+                  {matchedInput ? (
+                    <InputLabel
+                      inp={matchedInput}
+                      candidate={candidate}
+                      mergedMembers={mergedMembers}
+                      onMerge={onMerge}
+                      onExpand={onExpand}
+                      className="tornado-label"
+                    />
+                  ) : (
+                    <td className="tornado-label" title={b.detail}>{b.label}</td>
+                  )}
                   <td className="tornado-bar-cell">
                     <div className="tornado-bar-track">
                       {lowWidthPct > 0.1 && (
@@ -1149,9 +1122,8 @@ function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stop
         <div className="tab-footer">
           <div className="tab-footnote">
             Each input is varied to its <strong>P5</strong> and <strong>P95</strong> one at a time,
-            with all other inputs held at their means. The bar shows the resulting output range.
-            Green = output rises when the input rises; red = output falls. Sorted by total swing.
-            One-at-a-time perturbation isolates each lever, but doesn't capture interactions between inputs.
+            with all other inputs held at their means. The bar shows the resulting output range —
+            green when the output rises with the input, red when it falls.
           </div>
         </div>
       </div>
@@ -1195,27 +1167,47 @@ function SensitivityInputPicker({
   selection: Set<string>;
   onChange: (next: Set<string>) => void;
 }) {
+  const allSelected = allNodes.length > 0 && allNodes.every(n => selection.has(inputGA(n)));
+  const noneSelected = allNodes.every(n => !selection.has(inputGA(n)));
   return (
     <div className="picker-container">
-      <div className="picker-label">Inputs</div>
+      <div className="picker-header">
+        <span className="picker-label">Inputs</span>
+        <div className="picker-bulk">
+          <button
+            className="picker-bulk-btn"
+            disabled={allSelected}
+            title="Select all inputs"
+            onClick={() => onChange(new Set(allNodes.map(inputGA)))}
+          >All</button>
+          <button
+            className="picker-bulk-btn"
+            disabled={noneSelected}
+            title="Clear selection"
+            onClick={() => onChange(new Set())}
+          >None</button>
+        </div>
+      </div>
       <div className="picker-list">
         {allNodes.map((inp) => {
           const ga = inputGA(inp);
-          const checked = selection.has(ga);
+          const selected = selection.has(ga);
           return (
-            <label key={ga} className="picker-row" title={inp.detail}>
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => {
-                  const next = new Set(selection);
-                  if (checked) next.delete(ga);
-                  else next.add(ga);
-                  onChange(next);
-                }}
-              />
-              <span className="picker-row-label">{inp.label}</span>
-            </label>
+            <button
+              key={ga}
+              type="button"
+              className={`picker-row${selected ? " picker-row-selected" : ""}`}
+              title={inp.detail}
+              aria-pressed={selected}
+              onClick={() => {
+                const next = new Set(selection);
+                if (selected) next.delete(ga);
+                else next.add(ga);
+                onChange(next);
+              }}
+            >
+              {inp.label}
+            </button>
           );
         })}
       </div>
