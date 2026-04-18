@@ -1929,11 +1929,17 @@ export interface SensitivityInput {
  * - Formulas with inline distribution constructors
  * - Scalar cells (for tornado context, marked isScalar=true)
  * Intermediate formula cells (that just combine upstream randomness) are excluded.
+ *
+ * If `stopSet` is provided, walking halts at any cell whose global address is
+ * in the set; that cell is added as an input regardless of whether it would
+ * otherwise be a leaf source. This implements the auto cut-deepener: a merged
+ * intermediate replaces all the leaves it covers.
  */
 export function collectInputs(
   outputAddr: CellAddress,
   outputSheetIdx: number,
   allSheets: Sheet[],
+  stopSet?: Set<GlobalAddr>,
 ): SensitivityInput[] {
   const { allVarMaps } = buildAllVarMaps(allSheets);
   const visited = new Set<GlobalAddr>();
@@ -1946,6 +1952,29 @@ export function collectInputs(
 
     const cell = allSheets[sheetIdx]?.cells.get(addr);
     if (!cell) return;
+
+    // Stop set: if this cell is a merged intermediate, add it and don't recurse
+    if (stopSet?.has(ga) && cell.result?.kind === "samples") {
+      let label: string;
+      if (cell.variableName) {
+        label = sheetIdx !== outputSheetIdx
+          ? `${allSheets[sheetIdx].name}.${cell.variableName}`
+          : cell.variableName;
+      } else {
+        label = sheetIdx !== outputSheetIdx
+          ? `${allSheets[sheetIdx].name}.${addr}`
+          : addr;
+      }
+      inputs.push({
+        sheetIndex: sheetIdx,
+        addr,
+        label,
+        detail: cell.raw,
+        result: cell.result,
+        isScalar: false,
+      });
+      return;
+    }
 
     const isSource =
       cell.content.kind === "distribution" ||
@@ -2165,8 +2194,9 @@ export function computeTornado(
   outputSheetIdx: number,
   allSheets: Sheet[],
   settings = DEFAULT_SETTINGS,
+  stopSet?: Set<GlobalAddr>,
 ): TornadoBar[] {
-  const inputs = collectInputs(outputAddr, outputSheetIdx, allSheets);
+  const inputs = collectInputs(outputAddr, outputSheetIdx, allSheets, stopSet);
   const distInputs = inputs.filter((inp) => !inp.isScalar && inp.result.kind === "samples");
   if (distInputs.length === 0) return [];
 
@@ -2436,4 +2466,451 @@ export function histogram(
   }
 
   return { min: snappedMin, max: snappedMax, bins, binWidth };
+}
+
+// ─── Intermediate-node sensitivity ───────────────────────────────────
+
+/** Build a SensitivityInput from a cell's GlobalAddr. */
+function makeSensitivityInput(
+  ga: GlobalAddr,
+  allSheets: Sheet[],
+  outputSheetIdx: number,
+): SensitivityInput | null {
+  const { sheetIdx, addr } = fromGlobal(ga);
+  const cell = allSheets[sheetIdx]?.cells.get(addr);
+  if (!cell || !cell.result) return null;
+  let label: string;
+  if (cell.variableName) {
+    label = sheetIdx !== outputSheetIdx
+      ? `${allSheets[sheetIdx].name}.${cell.variableName}`
+      : cell.variableName;
+  } else {
+    label = sheetIdx !== outputSheetIdx
+      ? `${allSheets[sheetIdx].name}.${addr}`
+      : addr;
+  }
+  return {
+    sheetIndex: sheetIdx,
+    addr,
+    label,
+    detail: cell.raw,
+    result: cell.result,
+    isScalar: cell.result.kind === "scalar",
+  };
+}
+
+/**
+ * Walk the output's full sub-DAG and return per-cell direct dependencies.
+ * Cells appear in topological order (dependencies before dependents).
+ * Used as the structural backbone for cut-deepener and intermediate sensitivity.
+ */
+function walkSubDagGlobal(
+  outputAddr: CellAddress,
+  outputSheetIdx: number,
+  allSheets: Sheet[],
+  allVarMaps: Map<string, CellAddress>[],
+): { order: GlobalAddr[]; directDeps: Map<GlobalAddr, GlobalAddr[]>; cellByGA: Map<GlobalAddr, Cell> } {
+  const order: GlobalAddr[] = [];
+  const visited = new Set<GlobalAddr>();
+  const directDeps = new Map<GlobalAddr, GlobalAddr[]>();
+  const cellByGA = new Map<GlobalAddr, Cell>();
+
+  function walk(sheetIdx: number, addr: CellAddress) {
+    const ga = toGlobal(sheetIdx, addr);
+    if (visited.has(ga)) return;
+    visited.add(ga);
+    const cell = allSheets[sheetIdx]?.cells.get(addr);
+    if (!cell) return;
+    cellByGA.set(ga, cell);
+
+    const deps: GlobalAddr[] = [];
+    if (cell.content.kind === "formula") {
+      const { cellRefs, varRefs, sheetRefs } = exprDeps(cell.content.expr);
+      for (const ref of cellRefs) {
+        const childGA = toGlobal(sheetIdx, ref);
+        deps.push(childGA);
+        walk(sheetIdx, ref);
+      }
+      for (const v of varRefs) {
+        const resolved = allVarMaps[sheetIdx].get(v);
+        if (resolved) {
+          const childGA = toGlobal(sheetIdx, resolved);
+          deps.push(childGA);
+          walk(sheetIdx, resolved);
+        }
+      }
+      for (const sr of sheetRefs) {
+        const targetIdx = findSheetIndex(allSheets, sr.sheet);
+        if (targetIdx < 0) continue;
+        if (sr.addr) {
+          const childGA = toGlobal(targetIdx, sr.addr);
+          deps.push(childGA);
+          walk(targetIdx, sr.addr);
+        } else if (sr.varName) {
+          const resolved = allVarMaps[targetIdx].get(sr.varName);
+          if (resolved) {
+            const childGA = toGlobal(targetIdx, resolved);
+            deps.push(childGA);
+            walk(targetIdx, resolved);
+          }
+        }
+      }
+    }
+    directDeps.set(ga, deps);
+    order.push(ga);
+  }
+
+  walk(outputSheetIdx, outputAddr);
+  return { order, directDeps, cellByGA };
+}
+
+/**
+ * Collect all stochastic cells in the output's sub-DAG: leaf sources of
+ * randomness AND intermediate formula cells whose result is a sample array.
+ * Used by the Sobol/Regression input picker to let the user select any
+ * cell along the dependency chain.
+ */
+export function collectAllStochasticNodes(
+  outputAddr: CellAddress,
+  outputSheetIdx: number,
+  allSheets: Sheet[],
+): SensitivityInput[] {
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+  const outputCell = allSheets[outputSheetIdx]?.cells.get(outputAddr);
+  if (!outputCell || outputCell.content.kind !== "formula") return [];
+
+  const { order, cellByGA } = walkSubDagGlobal(outputAddr, outputSheetIdx, allSheets, allVarMaps);
+  const outputGA = toGlobal(outputSheetIdx, outputAddr);
+
+  const inputs: SensitivityInput[] = [];
+  for (const ga of order) {
+    if (ga === outputGA) continue;
+    const cell = cellByGA.get(ga);
+    if (!cell || !cell.result) continue;
+    if (cell.result.kind !== "samples") continue;
+    const inp = makeSensitivityInput(ga, allSheets, outputSheetIdx);
+    if (inp) inputs.push(inp);
+  }
+  return inputs;
+}
+
+/** A merge candidate: an intermediate cell that can safely replace a group of leaves. */
+export interface MergeCandidate {
+  target: SensitivityInput;       // intermediate to merge into
+  mergedLeaves: SensitivityInput[]; // leaves currently shown that would be replaced
+}
+
+/**
+ * Find safe merge candidates for the auto cut-deepener. A merge is safe iff:
+ * (a) the candidate intermediate M's stochastic ancestors A(M) are all currently
+ *     shown as inputs (so we'd be replacing things in the visible list), and
+ * (b) every cell outside (A(M) ∪ {M}) that depends on something in S = A(M)∪{M}
+ *     enters S only via M — i.e. no leaf in A(M) has a downstream consumer that
+ *     isn't itself in A(M) or doesn't go through M.
+ *
+ * Condition (b) guarantees that M perfectly summarises the contribution of its
+ * leaves to the output and to anything else in the sub-DAG, so collapsing
+ * cannot double-count.
+ */
+export function findMergeCandidates(
+  outputAddr: CellAddress,
+  outputSheetIdx: number,
+  allSheets: Sheet[],
+  currentInputs: SensitivityInput[],
+): MergeCandidate[] {
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+  const outputCell = allSheets[outputSheetIdx]?.cells.get(outputAddr);
+  if (!outputCell || outputCell.content.kind !== "formula") return [];
+
+  const { order, directDeps, cellByGA } = walkSubDagGlobal(outputAddr, outputSheetIdx, allSheets, allVarMaps);
+  const outputGA = toGlobal(outputSheetIdx, outputAddr);
+
+  // Identify stochastic source cells (the kind collectInputs treats as leaves).
+  const stochasticSources = new Set<GlobalAddr>();
+  for (const ga of order) {
+    const cell = cellByGA.get(ga)!;
+    if (cell.content.kind === "distribution") stochasticSources.add(ga);
+    else if (cell.content.kind === "formula" && hasInlineDistribution(cell.content.expr)) stochasticSources.add(ga);
+  }
+
+  // Compute A(C) = stochastic-source ancestors of each cell, bottom-up.
+  // walkSubDagGlobal returns topological order (deps before dependents), so a single forward pass works.
+  const ancestors = new Map<GlobalAddr, Set<GlobalAddr>>();
+  for (const ga of order) {
+    const set = new Set<GlobalAddr>();
+    if (stochasticSources.has(ga)) set.add(ga);
+    for (const dep of directDeps.get(ga) ?? []) {
+      const depAnc = ancestors.get(dep);
+      if (depAnc) for (const a of depAnc) set.add(a);
+    }
+    ancestors.set(ga, set);
+  }
+
+  // Set of GAs currently shown as inputs (mix of leaves and possibly already-merged intermediates).
+  const currentInputGAs = new Set<GlobalAddr>(
+    currentInputs.map(inp => toGlobal(inp.sheetIndex, inp.addr))
+  );
+
+  const candidates: MergeCandidate[] = [];
+  for (const M of order) {
+    if (M === outputGA) continue;
+    const cell = cellByGA.get(M)!;
+    if (cell.content.kind !== "formula") continue;
+    if (stochasticSources.has(M)) continue; // skip leaf-source formulas (inline dists)
+    if (!cell.result || cell.result.kind !== "samples") continue;
+
+    const A_M = ancestors.get(M)!;
+    if (A_M.size < 2) continue;
+
+    // (a) A(M) ⊆ currentInputs?
+    let allCovered = true;
+    for (const a of A_M) {
+      if (!currentInputGAs.has(a)) { allCovered = false; break; }
+    }
+    if (!allCovered) continue;
+
+    // (b) No cell outside (A(M) ∪ {M}) directly depends on a cell in A(M).
+    // (M itself is allowed to depend on things in A(M); that's the whole point.)
+    let safe = true;
+    for (const C of order) {
+      if (C === M) continue;
+      if (A_M.has(C)) continue;
+      const deps = directDeps.get(C) ?? [];
+      for (const d of deps) {
+        if (A_M.has(d)) { safe = false; break; }
+      }
+      if (!safe) break;
+    }
+    if (!safe) continue;
+
+    const target = makeSensitivityInput(M, allSheets, outputSheetIdx);
+    if (!target) continue;
+    const mergedLeaves: SensitivityInput[] = [];
+    for (const a of A_M) {
+      const inp = makeSensitivityInput(a, allSheets, outputSheetIdx);
+      if (inp) mergedLeaves.push(inp);
+    }
+    candidates.push({ target, mergedLeaves });
+  }
+
+  return candidates;
+}
+
+/**
+ * First-order Sobol sensitivity index: S₁ = Var[E[Y|X]] / Var[Y].
+ * Estimated by sorting (X,Y) pairs by X, partitioning into ~√N equal-count bins,
+ * and computing the variance of the per-bin Y means (weighted by bin counts)
+ * relative to the total variance of Y.
+ *
+ * Returns a value in [0, 1]. The estimator can produce small negative values
+ * from sampling noise, which are clamped to 0. Values >1 are similarly clamped.
+ */
+export function computeSobolFirstOrder(x: Float64Array, y: Float64Array): number {
+  const n = Math.min(x.length, y.length);
+  if (n < 10) return 0;
+
+  // Sort indices by x ascending
+  const idx = new Int32Array(n);
+  for (let i = 0; i < n; i++) idx[i] = i;
+  const sortedIdx = Array.from(idx).sort((a, b) => x[a] - x[b]);
+
+  const numBins = Math.max(2, Math.floor(Math.sqrt(n)));
+  const binSize = Math.floor(n / numBins);
+  if (binSize < 2) return 0;
+
+  // Overall mean of y
+  let yMean = 0;
+  for (let i = 0; i < n; i++) yMean += y[i];
+  yMean /= n;
+
+  // Bin means and the weighted variance of bin means
+  let weightedBinVar = 0;
+  let pos = 0;
+  for (let b = 0; b < numBins; b++) {
+    const end = (b === numBins - 1) ? n : pos + binSize;
+    const count = end - pos;
+    let sum = 0;
+    for (let i = pos; i < end; i++) sum += y[sortedIdx[i]];
+    const mean = sum / count;
+    const d = mean - yMean;
+    weightedBinVar += count * d * d;
+    pos = end;
+  }
+  weightedBinVar /= n;
+
+  // Total variance of y
+  let totalVar = 0;
+  for (let i = 0; i < n; i++) {
+    const d = y[i] - yMean;
+    totalVar += d * d;
+  }
+  totalVar /= n;
+  if (totalVar <= 0) return 0;
+
+  return Math.max(0, Math.min(1, weightedBinVar / totalVar));
+}
+
+/** Result of a multivariate regression sensitivity computation. */
+export interface RegressionResult {
+  stdBetas: number[];        // standardized regression coefficients (signed)
+  partialR2: number[];       // unique variance explained per input (Type III)
+  totalR2: number;           // model R² over selected inputs
+  collinear: boolean;        // true if design matrix was numerically singular
+}
+
+/**
+ * Solve a linear system Ax = b via Gauss-Jordan elimination with partial
+ * pivoting. Returns the solution and a singular flag if a pivot is too small.
+ */
+function solveLinearSystem(A: number[][], b: number[]): { x: number[]; singular: boolean } {
+  const n = A.length;
+  if (n === 0) return { x: [], singular: false };
+  // Augmented matrix copy
+  const M: number[][] = A.map((row, i) => [...row, b[i]]);
+
+  for (let i = 0; i < n; i++) {
+    // Partial pivoting
+    let maxRow = i;
+    for (let r = i + 1; r < n; r++) {
+      if (Math.abs(M[r][i]) > Math.abs(M[maxRow][i])) maxRow = r;
+    }
+    if (maxRow !== i) [M[i], M[maxRow]] = [M[maxRow], M[i]];
+
+    const pivot = M[i][i];
+    if (Math.abs(pivot) < 1e-10) {
+      return { x: new Array(n).fill(NaN), singular: true };
+    }
+    for (let j = i; j <= n; j++) M[i][j] /= pivot;
+    for (let r = 0; r < n; r++) {
+      if (r === i) continue;
+      const factor = M[r][i];
+      if (factor === 0) continue;
+      for (let j = i; j <= n; j++) M[r][j] -= factor * M[i][j];
+    }
+  }
+
+  return { x: M.map(row => row[n]), singular: false };
+}
+
+/**
+ * Multivariate regression sensitivity. Fits y ~ β₁x₁ + ... + βₖxₖ via OLS
+ * (centred, no intercept), then returns:
+ *  - stdBetas[i] = βᵢ · σ(xᵢ) / σ(y) (signed; how many σ_y per σ_xᵢ)
+ *  - partialR2[i] = (SSE_without_i − SSE_full) / SST (unique variance contribution)
+ *  - totalR2 = 1 − SSE_full / SST
+ *  - collinear = true if the design matrix is singular
+ *
+ * partialR2 sums to ≤ totalR2; the gap is variance jointly explained by
+ * correlated inputs and is shown to the user as the "shared overlap".
+ */
+export function computeRegressionSensitivity(
+  inputs: Float64Array[],
+  output: Float64Array,
+): RegressionResult {
+  const k = inputs.length;
+  const n = output.length;
+  if (k === 0 || n < 3) {
+    return { stdBetas: [], partialR2: [], totalR2: 0, collinear: false };
+  }
+
+  // Centre inputs and output
+  const xMeans = inputs.map(x => {
+    let s = 0; for (let i = 0; i < n; i++) s += x[i]; return s / n;
+  });
+  let yMean = 0;
+  for (let i = 0; i < n; i++) yMean += output[i];
+  yMean /= n;
+
+  const Xc: Float64Array[] = inputs.map((x, j) => {
+    const c = new Float64Array(n);
+    const m = xMeans[j];
+    for (let i = 0; i < n; i++) c[i] = x[i] - m;
+    return c;
+  });
+  const Yc = new Float64Array(n);
+  for (let i = 0; i < n; i++) Yc[i] = output[i] - yMean;
+
+  // Std deviations (population, with n divisor — cancels in standardisation)
+  const xStds = Xc.map(x => {
+    let s = 0; for (let i = 0; i < n; i++) s += x[i] * x[i]; return Math.sqrt(s / n);
+  });
+  let yVar = 0;
+  for (let i = 0; i < n; i++) yVar += Yc[i] * Yc[i];
+  const yStd = Math.sqrt(yVar / n);
+  const SST = yVar; // ∑(y−ȳ)² (matches SSE units)
+
+  // Build XᵀX and Xᵀy
+  const XtX: number[][] = [];
+  for (let i = 0; i < k; i++) {
+    const row = new Array(k);
+    for (let j = 0; j < k; j++) {
+      let s = 0;
+      const Xi = Xc[i], Xj = Xc[j];
+      for (let r = 0; r < n; r++) s += Xi[r] * Xj[r];
+      row[j] = s;
+    }
+    XtX.push(row);
+  }
+  const Xty = new Array(k);
+  for (let i = 0; i < k; i++) {
+    let s = 0;
+    const Xi = Xc[i];
+    for (let r = 0; r < n; r++) s += Xi[r] * Yc[r];
+    Xty[i] = s;
+  }
+
+  // Solve full system
+  const { x: betas, singular } = solveLinearSystem(XtX, Xty);
+  if (singular) {
+    return { stdBetas: new Array(k).fill(0), partialR2: new Array(k).fill(0), totalR2: 0, collinear: true };
+  }
+
+  // Fitted values and SSE_full
+  let SSE_full = 0;
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    for (let j = 0; j < k; j++) v += betas[j] * Xc[j][i];
+    const e = Yc[i] - v;
+    SSE_full += e * e;
+  }
+  const totalR2 = SST > 0 ? Math.max(0, Math.min(1, 1 - SSE_full / SST)) : 0;
+
+  // Standardised betas
+  const stdBetas = betas.map((b, j) => yStd > 0 ? b * xStds[j] / yStd : 0);
+
+  // Partial r² via leave-one-out refits
+  const partialR2 = new Array(k).fill(0);
+  if (k === 1) {
+    partialR2[0] = totalR2;
+  } else {
+    for (let drop = 0; drop < k; drop++) {
+      const reducedXtX: number[][] = [];
+      const reducedXty: number[] = [];
+      for (let i = 0; i < k; i++) {
+        if (i === drop) continue;
+        const row: number[] = [];
+        for (let j = 0; j < k; j++) {
+          if (j === drop) continue;
+          row.push(XtX[i][j]);
+        }
+        reducedXtX.push(row);
+        reducedXty.push(Xty[i]);
+      }
+      const { x: bDrop, singular: sd } = solveLinearSystem(reducedXtX, reducedXty);
+      if (sd) { partialR2[drop] = 0; continue; }
+      let SSE_drop = 0;
+      for (let i = 0; i < n; i++) {
+        let v = 0, bIdx = 0;
+        for (let j = 0; j < k; j++) {
+          if (j === drop) continue;
+          v += bDrop[bIdx++] * Xc[j][i];
+        }
+        const e = Yc[i] - v;
+        SSE_drop += e * e;
+      }
+      partialR2[drop] = SST > 0 ? Math.max(0, (SSE_drop - SSE_full) / SST) : 0;
+    }
+  }
+
+  return { stdBetas, partialR2, totalR2, collinear: false };
 }
