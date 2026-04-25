@@ -730,7 +730,7 @@
 /* Help dialog */
 .help-dialog {
   min-width: 420px;
-  max-width: 500px;
+  max-width: 520px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -814,6 +814,19 @@
 .help-table code {
   font-size: 12px;
   color: var(--distribution);
+}
+
+.help-table .help-subrow td:first-child {
+  padding-left: 22px;
+  position: relative;
+}
+
+.help-table .help-subrow td:first-child::before {
+  content: "•";
+  position: absolute;
+  left: 8px;
+  top: 2px;
+  color: var(--text-dim);
 }
 
 .help-note {

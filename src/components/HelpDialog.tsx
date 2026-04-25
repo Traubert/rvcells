@@ -24,12 +24,21 @@ const PAGES = [
           <table className="help-table">
             <tbody>
               <tr><td><code>Normal(mean, std)</code></td><td>Gaussian</td></tr>
-              <tr><td><code>LogNormal(mu, sigma)</code></td><td>Log-normal</td></tr>
+              <tr className="help-subrow"><td><code>100 ± 10</code> / <code>100 +- 10</code></td><td>Shorthand for Normal(100, 10)</td></tr>
+              <tr className="help-subrow"><td><code>Normal()</code></td><td>Standard normal — mean 0, std 1</td></tr>
+              <tr><td><code>LogNormal(mu, sigma)</code></td><td>Log-normal (log-space parameters)</td></tr>
+              <tr className="help-subrow"><td><code>LogNormal()</code></td><td>Log-space mean 0 and std 1</td></tr>
+              <tr><td><code>Normal(250, 10%)</code> / <br/><code>LogNormal(250, 10%)</code></td><td>Coefficient of Variation, or Relative Standard Deviation — here, std is 25. Also works with the ± shorthand: <code>250 +- 10%</code>.</td></tr>
               <tr><td><code>Uniform(low, high)</code></td><td>Uniform</td></tr>
+              <tr className="help-subrow"><td><code>Uniform()</code></td><td>Uniform on [0,&nbsp;1]</td></tr>
               <tr><td><code>Triangular(low, mode, high)</code></td><td>Triangular</td></tr>
+              <tr className="help-subrow"><td><code>Triangular()</code></td><td>Triangular, symmetric on [0,&nbsp;1]</td></tr>
               <tr><td><code>Beta(alpha, beta)</code></td><td>Beta on [0, 1]</td></tr>
               <tr><td><code>Pareto(xMin, alpha)</code></td><td>Heavy-tailed power law</td></tr>
               <tr><td><code>Poisson(lambda)</code></td><td>Count of events per interval</td></tr>
+              <tr className="help-subrow"><td><code>Poisson()</code></td><td>Poisson with rate 1</td></tr>
+              <tr><td><code>Bernoulli(p)</code></td><td>Single trial: 1 with probability p, else 0</td></tr>
+              <tr className="help-subrow"><td><code>Bernoulli()</code></td><td>Fair coin (p&nbsp;= 0.5)</td></tr>
               <tr><td><code>StudentT(nu)</code></td><td>Heavy-tailed symmetric</td></tr>
               <tr><td><code>StudentT(nu, mu, sigma)</code></td><td>Location-scale Student&apos;s t</td></tr>
             </tbody>

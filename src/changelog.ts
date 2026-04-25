@@ -32,6 +32,8 @@ export const changelog: ChangelogEntry[] = [
   { version: 21, summary: "Light mode \u2014 auto/dark/light theme toggle in Settings \u2192 Global" },
   { version: 22, summary: "Sobol and Effect sizes tabs in the detail panel; pick any inputs from the dependency graph" },
   { version: 23, summary: "Cut-deepener: collapse leaf inputs into their shared intermediate (\u2212/+ buttons next to grouped rows)" },
+  { version: 24, summary: "Argless distribution forms (Normal(), LogNormal(), Uniform(), Triangular(), Poisson(), Bernoulli()) and percent-CV syntax for Normal/LogNormal: Normal(100, 10%) and LogNormal(100, 10%)" },
+  { version: 25, summary: "± / +- shorthand for Normal: \"100 ± 10\", \"100 +- 10\", or \"150 +- 10%\"" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

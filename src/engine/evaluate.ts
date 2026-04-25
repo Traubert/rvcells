@@ -51,6 +51,7 @@ function exprDeps(expr: Expr): {
   function walk(e: Expr) {
     switch (e.type) {
       case "number":
+      case "percent":
         break;
       case "cellRef":
         cellRefs.push(toAddress(e.col, e.row));
@@ -312,6 +313,9 @@ function evalExpr(
   switch (expr.type) {
     case "number":
       return { kind: "scalar", value: expr.value };
+
+    case "percent":
+      throw new Error("'%' is only valid as the spread argument of Normal() or LogNormal()");
 
     case "cellRef": {
       const addr = toAddress(expr.col, expr.row);
@@ -1075,7 +1079,18 @@ function evalFunc(
 
   // ─── Regular functions (no range support) ─────────────────────────────
 
-  const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells, ctx));
+  // Percent literals are valid only as the spread arg of Normal()/LogNormal().
+  // Pass them through as placeholder scalars; the normal/lognormal cases inspect
+  // argExprs[i].type to recognize and apply CV semantics.
+  const allowsPercent = name === "normal" || name === "lognormal";
+  const args = argExprs.map((e, i) => {
+    if (e.type === "percent") {
+      if (!allowsPercent || i !== 1)
+        throw new Error("'%' is only valid as the spread argument of Normal() or LogNormal()");
+      return { kind: "scalar" as const, value: e.value };
+    }
+    return evalExpr(e, results, varMap, n, cells, ctx);
+  });
 
   switch (name) {
     // Math functions — 1 argument
@@ -1123,25 +1138,56 @@ function evalFunc(
     // Distribution constructors — return sample arrays
     // Each captures its samples for sensitivity analysis via _inlineSampleCapture
     case "normal": {
-      if (args.length !== 2) throw new Error("Normal(mean, std) takes 2 arguments");
+      if (args.length === 0) {
+        return captureDist(`Normal()`,
+          { kind: "samples", values: sample({ type: "Normal", mean: 0, std: 1 }, n) }, 0);
+      }
+      if (args.length !== 2) throw new Error("Normal() takes 0 or 2 arguments");
       const [meanR, stdR] = args;
       if (meanR.kind !== "scalar" || stdR.kind !== "scalar")
         throw new Error("Normal() parameters must be scalars");
+      // Percent CV: second arg AST is a percent literal → std = (pct/100)·|mean|
+      if (argExprs[1].type === "percent") {
+        const std = (argExprs[1].value / 100) * Math.abs(meanR.value);
+        return captureDist(`Normal(${meanR.value}, ${argExprs[1].value}%)`,
+          { kind: "samples", values: sample({ type: "Normal", mean: meanR.value, std }, n) },
+          meanR.value);
+      }
       return captureDist(`Normal(${meanR.value}, ${stdR.value})`,
         { kind: "samples", values: sample({ type: "Normal", mean: meanR.value, std: stdR.value }, n) },
         meanR.value);
     }
     case "lognormal": {
-      if (args.length !== 2) throw new Error("LogNormal(mu, sigma) takes 2 arguments");
+      if (args.length === 0) {
+        return captureDist(`LogNormal()`,
+          { kind: "samples", values: sample({ type: "LogNormal", mu: 0, sigma: 1 }, n) },
+          Math.exp(0.5));
+      }
+      if (args.length !== 2) throw new Error("LogNormal() takes 0 or 2 arguments");
       const [muR, sigmaR] = args;
       if (muR.kind !== "scalar" || sigmaR.kind !== "scalar")
         throw new Error("LogNormal() parameters must be scalars");
+      // Percent CV: first arg is real-space mean, second is arithmetic CV.
+      if (argExprs[1].type === "percent") {
+        if (muR.value <= 0) throw new Error("LogNormal mean must be positive when using % CV");
+        const cv = argExprs[1].value / 100;
+        const sigma2 = Math.log(1 + cv * cv);
+        const sigma = Math.sqrt(sigma2);
+        const mu = Math.log(muR.value) - sigma2 / 2;
+        return captureDist(`LogNormal(${muR.value}, ${argExprs[1].value}%)`,
+          { kind: "samples", values: sample({ type: "LogNormal", mu, sigma }, n) },
+          muR.value);
+      }
       return captureDist(`LogNormal(${muR.value}, ${sigmaR.value})`,
         { kind: "samples", values: sample({ type: "LogNormal", mu: muR.value, sigma: sigmaR.value }, n) },
         Math.exp(muR.value + sigmaR.value * sigmaR.value / 2));
     }
     case "uniform": {
-      if (args.length !== 2) throw new Error("Uniform(low, high) takes 2 arguments");
+      if (args.length === 0) {
+        return captureDist(`Uniform()`,
+          { kind: "samples", values: sample({ type: "Uniform", low: 0, high: 1 }, n) }, 0.5);
+      }
+      if (args.length !== 2) throw new Error("Uniform() takes 0 or 2 arguments");
       const [lowR, highR] = args;
       if (lowR.kind !== "scalar" || highR.kind !== "scalar")
         throw new Error("Uniform() parameters must be scalars");
@@ -1150,7 +1196,11 @@ function evalFunc(
         (lowR.value + highR.value) / 2);
     }
     case "triangular": {
-      if (args.length !== 3) throw new Error("Triangular(low, mode, high) takes 3 arguments");
+      if (args.length === 0) {
+        return captureDist(`Triangular()`,
+          { kind: "samples", values: sample({ type: "Triangular", low: 0, mode: 0.5, high: 1 }, n) }, 0.5);
+      }
+      if (args.length !== 3) throw new Error("Triangular() takes 0 or 3 arguments");
       const [tLow, tMode, tHigh] = args;
       if (tLow.kind !== "scalar" || tMode.kind !== "scalar" || tHigh.kind !== "scalar")
         throw new Error("Triangular() parameters must be scalars");
@@ -1179,7 +1229,11 @@ function evalFunc(
         { kind: "samples", values: sample({ type: "Pareto", xMin, alpha }, n) }, ev);
     }
     case "poisson": {
-      if (args.length !== 1) throw new Error("Poisson(lambda) takes 1 argument");
+      if (args.length === 0) {
+        return captureDist(`Poisson()`,
+          { kind: "samples", values: sample({ type: "Poisson", lambda: 1 }, n) }, 1);
+      }
+      if (args.length !== 1) throw new Error("Poisson() takes 0 or 1 arguments");
       const [lambdaR] = args;
       if (lambdaR.kind !== "scalar") throw new Error("Poisson() parameter must be scalar");
       const lambda = lambdaR.value;
@@ -1204,13 +1258,20 @@ function evalFunc(
 
     // Bernoulli distribution — samples 0/1
     case "bernoulli": {
-      if (args.length !== 1) throw new Error("bernoulli(p) takes 1 argument");
-      const [pR] = args;
-      if (pR.kind !== "scalar") throw new Error("bernoulli() parameter must be scalar");
-      const p = pR.value;
+      let p: number;
+      if (args.length === 0) {
+        p = 0.5;
+      } else if (args.length === 1) {
+        const [pR] = args;
+        if (pR.kind !== "scalar") throw new Error("bernoulli() parameter must be scalar");
+        p = pR.value;
+      } else {
+        throw new Error("bernoulli() takes 0 or 1 arguments");
+      }
       const out = new Float64Array(n);
       for (let i = 0; i < n; i++) out[i] = Math.random() < p ? 1 : 0;
-      return captureDist(`Bernoulli(${p})`, { kind: "samples", values: out }, p);
+      return captureDist(args.length === 0 ? `Bernoulli()` : `Bernoulli(${p})`,
+        { kind: "samples", values: out }, p);
     }
 
     // Discrete distribution — samples from {0, 1, ..., N-1}
@@ -1890,6 +1951,7 @@ export function summarize(result: CellResult): {
 function hasInlineDistribution(expr: Expr): boolean {
   switch (expr.type) {
     case "number":
+    case "percent":
     case "cellRef":
     case "varRef":
     case "sheetCellRef":

@@ -105,6 +105,101 @@ describe("parseCell", () => {
     it("rejects unknown distribution names", () => {
       expect(parseCell("Gaussian(5, 1)").content.kind).toBe("text");
     });
+
+    describe("argless variants", () => {
+      it("Normal() = N(0,1)", () => {
+        expect(parseCell("Normal()").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 0, std: 1 },
+        });
+      });
+      it("LogNormal() = exp(Z)", () => {
+        expect(parseCell("LogNormal()").content).toEqual({
+          kind: "distribution", dist: { type: "LogNormal", mu: 0, sigma: 1 },
+        });
+      });
+      it("Uniform() = U(0,1)", () => {
+        expect(parseCell("Uniform()").content).toEqual({
+          kind: "distribution", dist: { type: "Uniform", low: 0, high: 1 },
+        });
+      });
+      it("Triangular() = symmetric on unit interval", () => {
+        expect(parseCell("Triangular()").content).toEqual({
+          kind: "distribution", dist: { type: "Triangular", low: 0, mode: 0.5, high: 1 },
+        });
+      });
+      it("Poisson() = Poisson(1)", () => {
+        expect(parseCell("Poisson()").content).toEqual({
+          kind: "distribution", dist: { type: "Poisson", lambda: 1 },
+        });
+      });
+      it("rejects argless for distributions without sensible default", () => {
+        expect(parseCell("Beta()").content.kind).toBe("text");
+        expect(parseCell("Pareto()").content.kind).toBe("text");
+        expect(parseCell("StudentT()").content.kind).toBe("text");
+      });
+    });
+
+    describe("percent CV syntax", () => {
+      it("Normal(mean, x%) → std = (x/100)·|mean|", () => {
+        expect(parseCell("Normal(100, 10%)").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 100, std: 10 },
+        });
+        expect(parseCell("Normal(-200, 5%)").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: -200, std: 10 },
+        });
+      });
+      it("Normal(0, x%) yields a degenerate (zero-std) distribution", () => {
+        expect(parseCell("Normal(0, 10%)").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 0, std: 0 },
+        });
+      });
+      it("LogNormal(mean, x%) interprets x as arithmetic CV", () => {
+        const { content } = parseCell("LogNormal(100, 10%)");
+        if (content.kind !== "distribution" || content.dist.type !== "LogNormal") {
+          throw new Error("expected LogNormal");
+        }
+        const sigma2 = Math.log(1 + 0.01);
+        expect(content.dist.sigma).toBeCloseTo(Math.sqrt(sigma2), 12);
+        expect(content.dist.mu).toBeCloseTo(Math.log(100) - sigma2 / 2, 12);
+      });
+      it("LogNormal with non-positive mean and % CV throws", () => {
+        expect(parseCell("LogNormal(0, 10%)").content.kind).toBe("text");
+        expect(parseCell("LogNormal(-5, 10%)").content.kind).toBe("text");
+      });
+      it("rejects % at wrong arity", () => {
+        expect(parseCell("Normal(100%)").content.kind).toBe("text");
+      });
+    });
+
+    describe("± / +- shorthand", () => {
+      it("'100 +- 10' → Normal(100, 10)", () => {
+        expect(parseCell("100 +- 10").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 100, std: 10 },
+        });
+      });
+      it("'100 ± 10' → Normal(100, 10)", () => {
+        expect(parseCell("100 ± 10").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 100, std: 10 },
+        });
+      });
+      it("supports negative mean", () => {
+        expect(parseCell("-50 +- 5").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: -50, std: 5 },
+        });
+      });
+      it("supports percent CV: '150 +- 10%' → Normal(150, 15)", () => {
+        expect(parseCell("150 +- 10%").content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 150, std: 15 },
+        });
+      });
+      it("works in variable assignment", () => {
+        const r = parseCell("revenue = 1000 +- 50");
+        expect(r.variableName).toBe("revenue");
+        expect(r.content).toEqual({
+          kind: "distribution", dist: { type: "Normal", mean: 1000, std: 50 },
+        });
+      });
+    });
   });
 
   describe("formulas", () => {
@@ -128,6 +223,34 @@ describe("parseCell", () => {
 
     it("falls back to text on bad formula", () => {
       expect(parseCell("= +").content.kind).toBe("text");
+    });
+
+    it("parses % suffix as a percent literal in expressions", () => {
+      const { content } = parseCell("= Normal(100, 10%)");
+      expect(content.kind).toBe("formula");
+      if (content.kind !== "formula" || content.expr.type !== "funcCall") throw new Error("expected funcCall");
+      expect(content.expr.args[1]).toEqual({ type: "percent", value: 10 });
+    });
+
+    it("parses ± in expressions as Normal()", () => {
+      const { content } = parseCell("= A1 + (100 +- 10)");
+      if (content.kind !== "formula") throw new Error("expected formula");
+      // Right side should be funcCall normal
+      if (content.expr.type !== "binOp") throw new Error("expected binOp");
+      expect(content.expr.right).toEqual({
+        type: "funcCall", name: "normal",
+        args: [{ type: "number", value: 100 }, { type: "number", value: 10 }],
+      });
+    });
+
+    it("± has lower precedence than * and +", () => {
+      // 2 * 100 +- 10 → Normal(200, 10)
+      const { content } = parseCell("= 2 * 100 +- 10");
+      if (content.kind !== "formula" || content.expr.type !== "funcCall") throw new Error("expected funcCall");
+      expect(content.expr.name).toBe("normal");
+      // mean side is "2 * 100"
+      expect(content.expr.args[0].type).toBe("binOp");
+      expect(content.expr.args[1]).toEqual({ type: "number", value: 10 });
     });
   });
 

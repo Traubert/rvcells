@@ -69,13 +69,36 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
   }
 
   // Try as distribution
-  const dist = parseDistribution(trimmed);
-  if (dist) {
-    return { content: { kind: "distribution", dist } };
+  try {
+    const dist = parseDistribution(trimmed);
+    if (dist) {
+      return { content: { kind: "distribution", dist } };
+    }
+  } catch {
+    // Malformed distribution → fall through to text
+  }
+
+  // Try as ± shorthand: "100 +- 10" or "100 ± 10%"
+  const spreadDist = parseSpreadShorthand(trimmed);
+  if (spreadDist) {
+    return { content: { kind: "distribution", dist: spreadDist } };
   }
 
   // Fallback: text
   return { content: { kind: "text", value: trimmed } };
+}
+
+/** Parse `mean ± spread` or `mean +- spread[%]` as a constant Normal distribution. */
+function parseSpreadShorthand(s: string): Distribution | null {
+  const match = s.match(/^(-?[0-9.eE]+)\s*(?:±|\+-)\s*(-?[0-9.eE]+)(%?)$/);
+  if (!match) return null;
+  const mean = Number(match[1]);
+  const spread = Number(match[2]);
+  if (isNaN(mean) || isNaN(spread)) return null;
+  if (match[3] === "%") {
+    return { type: "Normal", mean, std: (spread / 100) * Math.abs(mean) };
+  }
+  return { type: "Normal", mean, std: spread };
 }
 
 /** Parse the RHS of a variable assignment — could be number, distribution, or expression */
@@ -87,9 +110,19 @@ function parseRHS(rhs: string): CellContent | null {
   }
 
   // Distribution?
-  const dist = parseDistribution(rhs);
-  if (dist) {
-    return { kind: "distribution", dist };
+  try {
+    const dist = parseDistribution(rhs);
+    if (dist) {
+      return { kind: "distribution", dist };
+    }
+  } catch {
+    // fall through to expression parsing
+  }
+
+  // ± shorthand?
+  const spreadDist = parseSpreadShorthand(rhs);
+  if (spreadDist) {
+    return { kind: "distribution", dist: spreadDist };
   }
 
   // Expression?
@@ -101,31 +134,76 @@ function parseRHS(rhs: string): CellContent | null {
   }
 }
 
-/** Parse a distribution like "Normal(100, 10)" */
+/** Parse a distribution like "Normal(100, 10)", "Normal()", or "Normal(100, 10%)" */
 function parseDistribution(s: string): Distribution | null {
-  const match = s.match(/^(\w+)\(([^)]+)\)$/);
+  const match = s.match(/^(\w+)\(([^)]*)\)$/);
   if (!match) return null;
 
   const name = match[1];
   if (!DISTRIBUTION_NAMES.has(name)) return null;
 
-  const args = match[2].split(",").map((a) => {
-    const n = Number(a.trim());
+  const argStr = match[2].trim();
+  const rawArgs = argStr === "" ? [] : argStr.split(",").map(a => a.trim());
+
+  // Normal: argless = N(0,1); 2 args = (mean, std) or (mean, x%) for arithmetic CV.
+  if (name === "Normal") {
+    if (rawArgs.length === 0) return { type: "Normal", mean: 0, std: 1 };
+    if (rawArgs.length === 2) {
+      const mean = Number(rawArgs[0]);
+      if (isNaN(mean)) throw new Error("Bad distribution argument");
+      if (rawArgs[1].endsWith("%")) {
+        const pct = Number(rawArgs[1].slice(0, -1).trim());
+        if (isNaN(pct)) throw new Error("Bad distribution argument");
+        return { type: "Normal", mean, std: (pct / 100) * Math.abs(mean) };
+      }
+      const std = Number(rawArgs[1]);
+      if (isNaN(std)) throw new Error("Bad distribution argument");
+      return { type: "Normal", mean, std };
+    }
+    return null;
+  }
+
+  // LogNormal: argless = exp(Z); 2 args = (mu, sigma) in log-space, or (mean, x%) for arithmetic CV.
+  if (name === "LogNormal") {
+    if (rawArgs.length === 0) return { type: "LogNormal", mu: 0, sigma: 1 };
+    if (rawArgs.length === 2) {
+      const first = Number(rawArgs[0]);
+      if (isNaN(first)) throw new Error("Bad distribution argument");
+      if (rawArgs[1].endsWith("%")) {
+        if (first <= 0) throw new Error("LogNormal mean must be positive when using % CV");
+        const pct = Number(rawArgs[1].slice(0, -1).trim());
+        if (isNaN(pct)) throw new Error("Bad distribution argument");
+        const cv = pct / 100;
+        const sigma2 = Math.log(1 + cv * cv);
+        return { type: "LogNormal", mu: Math.log(first) - sigma2 / 2, sigma: Math.sqrt(sigma2) };
+      }
+      const sigma = Number(rawArgs[1]);
+      if (isNaN(sigma)) throw new Error("Bad distribution argument");
+      return { type: "LogNormal", mu: first, sigma };
+    }
+    return null;
+  }
+
+  // Uniform: argless = U(0,1); 2 args = (low, high).
+  if (name === "Uniform") {
+    if (rawArgs.length === 0) return { type: "Uniform", low: 0, high: 1 };
+    if (rawArgs.length === 2) {
+      const low = Number(rawArgs[0]), high = Number(rawArgs[1]);
+      if (isNaN(low) || isNaN(high)) throw new Error("Bad distribution argument");
+      return { type: "Uniform", low, high };
+    }
+    return null;
+  }
+
+  const args = rawArgs.map((a) => {
+    const n = Number(a);
     if (isNaN(n)) throw new Error("Bad distribution argument");
     return n;
   });
 
   switch (name) {
-    case "Normal":
-      if (args.length === 2) return { type: "Normal", mean: args[0], std: args[1] };
-      break;
-    case "LogNormal":
-      if (args.length === 2) return { type: "LogNormal", mu: args[0], sigma: args[1] };
-      break;
-    case "Uniform":
-      if (args.length === 2) return { type: "Uniform", low: args[0], high: args[1] };
-      break;
     case "Triangular":
+      if (args.length === 0) return { type: "Triangular", low: 0, mode: 0.5, high: 1 };
       if (args.length === 3)
         return { type: "Triangular", low: args[0], mode: args[1], high: args[2] };
       break;
@@ -136,6 +214,7 @@ function parseDistribution(s: string): Distribution | null {
       if (args.length === 2) return { type: "Pareto", xMin: args[0], alpha: args[1] };
       break;
     case "Poisson":
+      if (args.length === 0) return { type: "Poisson", lambda: 1 };
       if (args.length === 1) return { type: "Poisson", lambda: args[0] };
       break;
     case "StudentT":
@@ -151,6 +230,7 @@ function parseDistribution(s: string): Distribution | null {
 
 type Token =
   | { type: "number"; value: number }
+  | { type: "percent"; value: number }
   | { type: "cellRef"; col: number; row: number; pinCol: boolean; pinRow: boolean }
   | { type: "ident"; name: string; original: string }
   | { type: "quotedName"; name: string }
@@ -196,7 +276,13 @@ function tokenize(input: string): Token[] {
       while (i < input.length && /[0-9.eE]/.test(input[i])) {
         num += input[i++];
       }
-      tokens.push({ type: "number", value: Number(num) });
+      // Optional `%` suffix → percent literal
+      if (input[i] === "%") {
+        i++;
+        tokens.push({ type: "percent", value: Number(num) });
+      } else {
+        tokens.push({ type: "number", value: Number(num) });
+      }
       continue;
     }
 
@@ -276,6 +362,18 @@ function tokenize(input: string): Token[] {
     // Arrow operator (must check before -)
     if (input[i] === "-" && input[i + 1] === ">") {
       tokens.push({ type: "arrow" });
+      i += 2;
+      continue;
+    }
+
+    // ± shorthand (must check before + and -)
+    if (input[i] === "±") {
+      tokens.push({ type: "op", value: "±" });
+      i++;
+      continue;
+    }
+    if (input[i] === "+" && input[i + 1] === "-") {
+      tokens.push({ type: "op", value: "±" });
       i += 2;
       continue;
     }
@@ -365,13 +463,24 @@ class Parser {
     return op === "==" || op === "!=" || op === ">" || op === "<" || op === ">=" || op === "<=";
   }
 
-  /** expr = additive ((comparison_op) additive)* */
+  /** expr = spread ((comparison_op) spread)* */
   parseExpression(): Expr {
-    let left = this.parseAdditive();
+    let left = this.parseSpread();
     while (this.isComparisonOp()) {
       const op = this.advance() as { type: "op"; value: string };
-      const right = this.parseAdditive();
+      const right = this.parseSpread();
       left = { type: "binOp", op: op.value as "==" | "!=" | ">" | "<" | ">=" | "<=", left, right };
+    }
+    return left;
+  }
+
+  /** spread = additive ('±' additive)?  — desugars to Normal(mean, spread) */
+  private parseSpread(): Expr {
+    const left = this.parseAdditive();
+    if (this.peekOp() === "±") {
+      this.advance();
+      const right = this.parseAdditive();
+      return { type: "funcCall", name: "normal", args: [left, right] };
     }
     return left;
   }
@@ -601,6 +710,11 @@ class Parser {
     if (tok.type === "number") {
       this.advance();
       return { type: "number", value: tok.value };
+    }
+
+    if (tok.type === "percent") {
+      this.advance();
+      return { type: "percent", value: tok.value };
     }
 
     if (tok.type === "cellRef") {
