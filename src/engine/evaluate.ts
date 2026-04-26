@@ -2442,6 +2442,42 @@ export function computeChainTimeline(
   return timeline;
 }
 
+/** Return the cached per-step sample arrays for a chain, evaluating up to numSteps if needed.
+ *  Returned array has length numSteps+1; entry t is the Float64Array of all sample values at step t.
+ *  The same sample index across steps represents one trajectory. */
+export function getChainSampleArrays(
+  cell: Cell,
+  cellAddr: CellAddress,
+  numSteps: number,
+  allSheets: Sheet[],
+  sheetIndex: number,
+  settings = DEFAULT_SETTINGS,
+): Float64Array[] {
+  if (!cell.chainBody || !cell.chainInitial) return [];
+
+  const sheet = allSheets[sheetIndex];
+  const { allVarMaps } = buildAllVarMaps(allSheets);
+  const allResults: Map<CellAddress, CellResult>[] = allSheets.map(() => new Map());
+  for (let si = 0; si < allSheets.length; si++) {
+    for (const [addr, c] of allSheets[si].cells) {
+      if (c.result) allResults[si].set(addr, c.result);
+    }
+  }
+  const ctx: CrossSheetCtx = {
+    allSheets,
+    currentSheetIdx: sheetIndex,
+    allVarMaps,
+    allResults,
+    settings,
+  };
+  evaluateChainStep(cell, cellAddr, numSteps, allResults[sheetIndex], allVarMaps[sheetIndex], settings.numSamples, sheet.cells, ctx);
+
+  const cache = cell.chainCache ?? [];
+  const out: Float64Array[] = [];
+  for (let t = 0; t <= numSteps && t < cache.length; t++) out.push(cache[t]);
+  return out;
+}
+
 /** Get the chain step result for the detail view. Lazily computes if needed. */
 export function getChainStepResult(
   cell: Cell,

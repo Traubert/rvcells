@@ -34,6 +34,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 23, summary: "Cut-deepener: collapse leaf inputs into their shared intermediate (\u2212/+ buttons next to grouped rows)" },
   { version: 24, summary: "Argless distribution forms (Normal(), LogNormal(), Uniform(), Triangular(), Poisson(), Bernoulli()) and percent-CV syntax for Normal/LogNormal: Normal(100, 10%) and LogNormal(100, 10%)" },
   { version: 25, summary: "± / +- shorthand for Normal: \"100 ± 10\", \"100 +- 10\", or \"150 +- 10%\"" },
+  { version: 26, summary: "Sample trajectories overlay in the Timeline fan chart (random / stratified by final value / stratified by trajectory mean)" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

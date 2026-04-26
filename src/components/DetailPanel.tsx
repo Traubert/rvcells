@@ -13,10 +13,12 @@ import {
   resolveReference,
   getChainStepResult,
   computeChainTimeline,
+  getChainSampleArrays,
 } from "../engine/evaluate";
 import type { MergeCandidate } from "../engine/evaluate";
 import type { SensitivityInput } from "../engine/evaluate";
 import { formatNumber } from "../format";
+import { mulberry32 } from "../random";
 import { DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
 
 export interface LockedRange {
@@ -70,6 +72,33 @@ function useRepeatAction(action: (step: number) => void) {
 }
 
 type DetailTab = "distribution" | "correlation" | "tornado" | "sobol" | "regression" | "timeline";
+
+const TRAJECTORY_POOL_MAX = 20;
+
+/** Permutation of [0..n) such that each prefix is a "spread out" subset of the
+ *  whole. Starts with both endpoints and the midpoint, then recursively bisects
+ *  the largest unfilled gap. Used so that increasing the visible trajectory
+ *  count adds lines that fill gaps between existing ones. */
+function bisectionRefinementOrder(n: number): number[] {
+  if (n <= 0) return [];
+  if (n === 1) return [0];
+  const order = [0, n - 1];
+  const seen = new Set(order);
+  // Max-heap by gap width; tie-break on lower endpoint for determinism
+  const queue: { lo: number; hi: number }[] = [{ lo: 0, hi: n - 1 }];
+  while (order.length < n && queue.length > 0) {
+    queue.sort((a, b) => (b.hi - b.lo) - (a.hi - a.lo) || a.lo - b.lo);
+    const { lo, hi } = queue.shift()!;
+    const mid = Math.floor((lo + hi) / 2);
+    if (mid !== lo && mid !== hi && !seen.has(mid)) {
+      seen.add(mid);
+      order.push(mid);
+      queue.push({ lo, hi: mid }, { lo: mid, hi });
+    }
+  }
+  for (let i = 0; i < n; i++) if (!seen.has(i)) order.push(i);
+  return order;
+}
 
 const EMPTY_SET: Set<string> = new Set();
 const EMPTY_HISTORY: Map<string, string[]> = new Map();
@@ -1641,6 +1670,87 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
     }
   }, [compareCell, compareAddr, compareSheetIndex, numSteps, allSheets]);
 
+  // Trajectory overlay state
+  const [showTrajectories, setShowTrajectories] = useState(false);
+  const [trajectoryCount, setTrajectoryCount] = useState(7);
+  const [trajectoryMode, setTrajectoryMode] = useState<"random" | "stratified-final" | "stratified-mean">("stratified-final");
+  const [trajectorySeed, setTrajectorySeed] = useState(1);
+  const [hideBands, setHideBands] = useState(false);
+
+  const trajectoryFrames = useMemo<Float64Array[]>(() => {
+    if (!showTrajectories) return [];
+    try {
+      return getChainSampleArrays(cell, addr, numSteps, allSheets, sheetIndex, settings);
+    } catch {
+      return [];
+    }
+  }, [showTrajectories, cell, addr, numSteps, allSheets, sheetIndex]);
+
+  // Pool of up to TRAJECTORY_POOL_MAX trajectories. Recomputed only when
+  // mode/seed/frames change — NOT when the visible count changes — so adjusting
+  // the count adds/removes lines without reshuffling.
+  const trajectoryPool = useMemo(() => {
+    if (!showTrajectories || trajectoryFrames.length === 0) return [];
+    const sampleCount = trajectoryFrames[0].length;
+    if (sampleCount === 0) return [];
+    const N = Math.min(TRAJECTORY_POOL_MAX, sampleCount);
+
+    let sortValue: Float64Array | null = null;
+    if (trajectoryMode === "stratified-final") {
+      sortValue = trajectoryFrames[trajectoryFrames.length - 1];
+    } else if (trajectoryMode === "stratified-mean") {
+      sortValue = new Float64Array(sampleCount);
+      for (let i = 0; i < sampleCount; i++) {
+        let s = 0;
+        for (let t = 0; t < trajectoryFrames.length; t++) s += trajectoryFrames[t][i];
+        sortValue[i] = s / trajectoryFrames.length;
+      }
+    }
+
+    const rand = mulberry32(trajectorySeed);
+    const picked: { index: number; bucketRank: number }[] = [];
+
+    if (sortValue === null) {
+      const used = new Set<number>();
+      while (picked.length < N) {
+        const i = Math.floor(rand() * sampleCount);
+        if (used.has(i)) continue;
+        used.add(i);
+        picked.push({ index: i, bucketRank: 0 });
+      }
+      const finalVals = trajectoryFrames[trajectoryFrames.length - 1];
+      picked.sort((a, b) => finalVals[a.index] - finalVals[b.index]);
+      picked.forEach((p, k) => { p.bucketRank = k; });
+    } else {
+      const sortedIdx = Array.from({ length: sampleCount }, (_, i) => i);
+      sortedIdx.sort((a, b) => sortValue![a] - sortValue![b]);
+      for (let k = 0; k < N; k++) {
+        const lo = Math.floor((k * sampleCount) / N);
+        const hi = Math.floor(((k + 1) * sampleCount) / N);
+        const span = Math.max(1, hi - lo);
+        const within = lo + Math.floor(rand() * span);
+        picked.push({ index: sortedIdx[Math.min(within, sampleCount - 1)], bucketRank: k });
+      }
+    }
+
+    // Color is fixed by pool position — stable as visible count changes.
+    // Hue range 130→0 (green→yellow→red) sits opposite the purple bands on the
+    // colour wheel, so trajectories contrast with the fan in both light and
+    // dark mode.
+    return picked.map(p => {
+      const t = N === 1 ? 0.5 : p.bucketRank / (N - 1);
+      const hue = Math.round(130 * (1 - t));
+      return { index: p.index, color: `hsl(${hue}, 78%, 42%)` };
+    });
+  }, [showTrajectories, trajectoryFrames, trajectoryMode, trajectorySeed]);
+
+  const trajectories = useMemo(() => {
+    if (trajectoryPool.length === 0) return [];
+    const C = Math.min(Math.max(1, trajectoryCount), trajectoryPool.length);
+    const visibleSet = new Set(bisectionRefinementOrder(trajectoryPool.length).slice(0, C));
+    return trajectoryPool.filter((_, i) => visibleSet.has(i));
+  }, [trajectoryPool, trajectoryCount]);
+
   const isXLocked = lockedXRange !== null;
   const xViewMin = isXLocked ? lockedXRange.min : 0;
   const xViewMax = isXLocked ? lockedXRange.max : numSteps;
@@ -1751,6 +1861,19 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
     if (s.p5 < yMin) yMin = s.p5;
     if (s.p95 > yMax) yMax = s.p95;
   }
+  // Expand y-range so visible trajectories don't clip. Reverts automatically
+  // when trajectories are toggled off (memos return empty arrays).
+  if (showTrajectories && trajectoryFrames.length > 0 && trajectories.length > 0) {
+    const tStart = Math.max(0, Math.floor(xViewMin));
+    const tEnd = Math.min(trajectoryFrames.length - 1, Math.ceil(xViewMax));
+    for (const tr of trajectories) {
+      for (let t = tStart; t <= tEnd; t++) {
+        const v = trajectoryFrames[t][tr.index];
+        if (v < yMin) yMin = v;
+        if (v > yMax) yMax = v;
+      }
+    }
+  }
   const yPad = (yMax - yMin) * 0.05 || 1;
   yMin -= yPad;
   yMax += yPad;
@@ -1830,6 +1953,60 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
           <span className="timeline-legend-middle">P40–P60</span>
           <span className="timeline-legend-median">Median</span>
         </span>
+        <label className="timeline-traj-toggle">
+          <input
+            type="checkbox"
+            checked={showTrajectories}
+            onChange={e => setShowTrajectories(e.target.checked)}
+          />
+          Trajectories
+        </label>
+        {showTrajectories && (
+          <>
+            <label>
+              Count:{" "}
+              <input
+                type="number"
+                min={1}
+                max={20}
+                className="timeline-steps-input timeline-traj-count"
+                value={trajectoryCount}
+                onChange={e => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v)) setTrajectoryCount(Math.max(1, Math.min(20, v)));
+                }}
+                onKeyDown={e => e.stopPropagation()}
+              />
+            </label>
+            <label>
+              Mode:{" "}
+              <select
+                className="timeline-traj-mode"
+                value={trajectoryMode}
+                onChange={e => setTrajectoryMode(e.target.value as typeof trajectoryMode)}
+              >
+                <option value="random">Random</option>
+                <option value="stratified-final">Stratified (final value)</option>
+                <option value="stratified-mean">Stratified (trajectory mean)</option>
+              </select>
+            </label>
+            <button
+              className="range-button"
+              onClick={() => setTrajectorySeed(s => s + 1)}
+              title="Pick a new sample"
+            >
+              Resample
+            </button>
+            <label className="timeline-traj-toggle">
+              <input
+                type="checkbox"
+                checked={hideBands}
+                onChange={e => setHideBands(e.target.checked)}
+              />
+              Hide bands
+            </label>
+          </>
+        )}
         {hoveredStats && (
           <span className="timeline-hover-stats">
             Step {hoveredStats.step}: median {formatNumber(hoveredStats.p50)}, P5–P95: {formatNumber(hoveredStats.p5)}–{formatNumber(hoveredStats.p95)}
@@ -1890,14 +2067,24 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
                 {xGridLines.map(v => (
                   <line key={`x${v}`} x1={toXPct(v)} x2={toXPct(v)} y1="0" y2="100" className="timeline-gridline" />
                 ))}
-                <polygon points={outerBand} className="timeline-band-outer" />
-                <polygon points={innerBand} className="timeline-band-inner" />
-                <polygon points={middleBand} className="timeline-band-middle" />
-                <polyline points={medianLine} className="timeline-median" />
-                {cmpOuterBand && <polygon points={cmpOuterBand} className="timeline-cmp-band-outer" />}
-                {cmpInnerBand && <polygon points={cmpInnerBand} className="timeline-cmp-band-inner" />}
-                {cmpMiddleBand && <polygon points={cmpMiddleBand} className="timeline-cmp-band-middle" />}
-                {cmpMedianLine && <polyline points={cmpMedianLine} className="timeline-cmp-median" />}
+                {!hideBands && <>
+                  <polygon points={outerBand} className="timeline-band-outer" />
+                  <polygon points={innerBand} className="timeline-band-inner" />
+                  <polygon points={middleBand} className="timeline-band-middle" />
+                  <polyline points={medianLine} className="timeline-median" />
+                  {cmpOuterBand && <polygon points={cmpOuterBand} className="timeline-cmp-band-outer" />}
+                  {cmpInnerBand && <polygon points={cmpInnerBand} className="timeline-cmp-band-inner" />}
+                  {cmpMiddleBand && <polygon points={cmpMiddleBand} className="timeline-cmp-band-middle" />}
+                  {cmpMedianLine && <polyline points={cmpMedianLine} className="timeline-cmp-median" />}
+                </>}
+                {trajectories.map(tr => (
+                  <polyline
+                    key={tr.index}
+                    points={trajectoryFrames.map((arr, t) => `${toXPct(t)},${toYPct(arr[tr.index])}`).join(" ")}
+                    className="timeline-trajectory"
+                    style={{ stroke: tr.color }}
+                  />
+                ))}
               </svg>
               {hoverPos !== null && (
                 <>

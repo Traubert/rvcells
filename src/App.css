@@ -2290,6 +2290,7 @@ thead .row-header {
 
 .timeline-hover-stats {
   color: var(--text-dim);
+  margin-left: auto;
 }
 
 .timeline-legend {
@@ -2409,6 +2410,37 @@ thead .row-header {
   stroke: var(--compare-median);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
+}
+
+.timeline-trajectory {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-opacity: 0.8;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.timeline-controls {
+  flex-wrap: wrap;
+}
+
+.timeline-traj-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timeline-traj-count {
+  width: 44px;
+}
+
+.timeline-traj-mode {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 4px;
 }
 
 .timeline-cursor {

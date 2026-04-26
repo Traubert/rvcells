@@ -21,6 +21,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/constants.ts` — shared string, numeric, and distribution name constants
 - `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
+- `src/random.ts` — small seeded PRNG (Mulberry32) for deterministic UI randomness
 - `src/components/Grid.tsx` — spreadsheet grid UI, keyboard navigation, formula bar
 - `src/components/DetailPanel.tsx` — histogram, percentile stats, range lock/zoom controls, sensitivity tabs (Correlation, Tornado, Sobol, Effect sizes with input picker, auto cut-deepener merge controls), Chain timeline fan chart
 - `src/components/OpenDialog.tsx` — browser storage open/delete dialog
@@ -95,7 +96,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
   - Optional `init stateName` or `init: prob -> state, ...` for initial state
   - Reuses Chain infrastructure: timeline fan chart, ChainIndex, cross-chain sync
 - [x] Comparison operators (==, !=, >, <, >=, <=) returning 1/0 per sample
-- [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls), click-to-inspect step histogram
+- [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls), click-to-inspect step histogram, sample trajectory overlay (random / stratified-by-final / stratified-by-mean), monotonic count slider, hide-bands toggle, y-range expands to fit visible trajectories
 - [x] Resizable detail panel (drag handle)
 - [x] Multi-cell selection (Shift+Arrow) with bulk delete
 - [x] Histogram guidelines (σ and percentile modes)
