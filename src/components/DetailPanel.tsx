@@ -1511,14 +1511,21 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
     [compareHist]
   );
 
-  const hoverInfo = hoverBin !== null && hist.bins[hoverBin] > 0 ? {
-    lo: hist.min + hoverBin * hist.binWidth,
-    hi: hist.min + (hoverBin + 1) * hist.binWidth,
-    pct: totalSamples > 0 ? (hist.bins[hoverBin] / totalSamples) * 100 : 0,
-    comparePct: compareHist && compareTotalSamples > 0
-      ? (compareHist.bins[hoverBin] / compareTotalSamples) * 100
-      : null,
-  } : null;
+  const hoverInfo = hoverBin !== null && hist.bins[hoverBin] > 0 ? (() => {
+    let below = 0, above = 0;
+    for (let i = 0; i < hoverBin; i++) below += hist.bins[i];
+    for (let i = hoverBin + 1; i < hist.bins.length; i++) above += hist.bins[i];
+    return {
+      lo: hist.min + hoverBin * hist.binWidth,
+      hi: hist.min + (hoverBin + 1) * hist.binWidth,
+      pct: totalSamples > 0 ? (hist.bins[hoverBin] / totalSamples) * 100 : 0,
+      belowPct: totalSamples > 0 ? (below / totalSamples) * 100 : 0,
+      abovePct: totalSamples > 0 ? (above / totalSamples) * 100 : 0,
+      comparePct: compareHist && compareTotalSamples > 0
+        ? (compareHist.bins[hoverBin] / compareTotalSamples) * 100
+        : null,
+    };
+  })() : null;
 
   const guideLines = getGuideLines(guideMode, stats);
   const range = hist.max - hist.min;
@@ -1607,10 +1614,12 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
         })()}
         {hoverInfo && (
           <span className="hist-hover-info">
+            <span className="hist-hover-cum">≤{formatNumber(hoverInfo.lo)}: {hoverInfo.belowPct.toFixed(1)}% </span>
             {formatNumber(hoverInfo.lo)}–{formatNumber(hoverInfo.hi)}: {hoverInfo.pct.toFixed(1)}%
             {hoverInfo.comparePct !== null && (
               <span className="hist-hover-compare"> / {hoverInfo.comparePct.toFixed(1)}%</span>
             )}
+            <span className="hist-hover-cum"> ≥{formatNumber(hoverInfo.hi)}: {hoverInfo.abovePct.toFixed(1)}%</span>
           </span>
         )}
       </div>
