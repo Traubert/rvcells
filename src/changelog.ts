@@ -35,6 +35,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 24, summary: "Argless distribution forms (Normal(), LogNormal(), Uniform(), Triangular(), Poisson(), Bernoulli()) and percent-CV syntax for Normal/LogNormal: Normal(100, 10%) and LogNormal(100, 10%)" },
   { version: 25, summary: "± / +- shorthand for Normal: \"100 ± 10\", \"100 +- 10\", or \"150 +- 10%\"" },
   { version: 26, summary: "Sample trajectories overlay in the Timeline fan chart (random / stratified by final value / stratified by trajectory mean)" },
+  { version: 27, summary: "Mouse multi-cell selection: drag to select, shift+click to extend, drag a selection to move it" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

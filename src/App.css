@@ -1194,6 +1194,17 @@ thead .row-header {
   outline-offset: -1px;
 }
 
+/* Cells inside a multi-cell selection can be dragged to move the block */
+.cell.movable {
+  cursor: grab;
+}
+
+.cell.move-preview {
+  background: var(--fill-preview-bg);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
 .cell-error {
   color: var(--error);
   font-size: 11px;

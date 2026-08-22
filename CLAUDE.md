@@ -98,7 +98,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Comparison operators (==, !=, >, <, >=, <=) returning 1/0 per sample
 - [x] Timeline fan chart in detail panel for Chain cells with step navigation, comparison overlay, X-axis zoom (scroll wheel + controls), click-to-inspect step histogram, sample trajectory overlay (random / stratified-by-final / stratified-by-mean), monotonic count slider, hide-bands toggle, y-range expands to fit visible trajectories
 - [x] Resizable detail panel (drag handle)
-- [x] Multi-cell selection (Shift+Arrow) with bulk delete
+- [x] Multi-cell selection (Shift+Arrow, shift+click, mouse drag) with bulk delete; drag inside a selection moves the block (cut+paste semantics, refs shift)
 - [x] Histogram guidelines (σ and percentile modes)
 - [x] Range unit selector (value, σ, percentile) for locked range
 - [x] Distribution comparison: overlay another cell's histogram (orange) with side-by-side stats
@@ -148,7 +148,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Contribution graph in sensitivity analysis idea
 - [ ] Export to AI agent idea
 - [ ] Need a more ergonomic way to input large and small numbers
-- [ ] Shift+click to highlight rectangular range of cells, drag&drop selections
+- [x] Shift+click to highlight rectangular range of cells, drag&drop selections
 - [ ] Autorange in histogram compare mode could try to fit both distributions?
 - [ ] While-editing help showing arguments of distributions and functions
 

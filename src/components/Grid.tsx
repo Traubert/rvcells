@@ -204,9 +204,14 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
     return set;
   }, [fillDragTarget, selectedAddr]);
 
-  const handleCellClick = useCallback(
-    (addr: CellAddress) => {
-      if (editingAddr && editingAddr !== addr) {
+  // --- Mouse selection: click, shift+click, drag-select, drag-move ---
+  const [movePreview, setMovePreview] = useState<{ dCol: number; dRow: number } | null>(null);
+
+  const handleCellMouseDown = useCallback(
+    (e: React.MouseEvent, addr: CellAddress) => {
+      if (e.button !== 0) return;
+      if (editingAddr === addr) return; // let the inline input handle its own mouse events
+      if (editingAddr) {
         // Commit from whichever input is active
         const value = editingInBar
           ? barInputRef.current?.value ?? editValue
@@ -215,10 +220,99 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
         stopEditing();
         onSheetChange();
       }
+      const parsed = parseAddress(addr);
+      if (!parsed) return;
+      e.preventDefault(); // no text selection while dragging
+      gridRef.current?.focus();
+
+      // Shift+click: extend selection from the current anchor (or active cell)
+      if (e.shiftKey && selectedAddr) {
+        setSelAnchor(selAnchor ?? selectedAddr);
+        setSelectedAddr(addr);
+        return;
+      }
+
+      const bounds = selectionBounds(selectedAddr, selAnchor);
+      const insideSel =
+        bounds !== null &&
+        parsed.col >= bounds.minCol && parsed.col <= bounds.maxCol &&
+        parsed.row >= bounds.minRow && parsed.row <= bounds.maxRow;
+
+      if (insideSel && bounds) {
+        // Drag inside an existing multi-selection moves it (cut+paste semantics)
+        let lastDelta = { dCol: 0, dRow: 0 };
+        let moved = false;
+        const handleMove = (ev: MouseEvent) => {
+          const td = (ev.target as HTMLElement).closest("td[data-addr]") as HTMLElement | null;
+          const over = td?.dataset.addr ? parseAddress(td.dataset.addr) : null;
+          if (!over) return;
+          lastDelta = {
+            dCol: Math.max(-bounds.minCol, Math.min(NUM_COLS - 1 - bounds.maxCol, over.col - parsed.col)),
+            dRow: Math.max(-bounds.minRow, Math.min(NUM_ROWS - 1 - bounds.maxRow, over.row - parsed.row)),
+          };
+          if (lastDelta.dCol !== 0 || lastDelta.dRow !== 0) moved = true;
+          setMovePreview(moved ? lastDelta : null);
+        };
+        const handleUp = () => {
+          window.removeEventListener("mousemove", handleMove);
+          window.removeEventListener("mouseup", handleUp);
+          setMovePreview(null);
+          if (!moved) {
+            // Plain click inside the selection: collapse to the clicked cell
+            setSelectedAddr(addr);
+            setSelAnchor(null);
+            return;
+          }
+          const { dCol, dRow } = lastDelta;
+          if (dCol === 0 && dRow === 0) return; // dragged back home: cancel
+          // Collect source contents first so overlapping source/target ranges work
+          const entries: { col: number; row: number; raw: string }[] = [];
+          for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+            for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+              const raw = sheet.cells.get(toAddress(c, r))?.raw;
+              if (raw) entries.push({ col: c, row: r, raw });
+            }
+          }
+          for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+            for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+              setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex, settings);
+            }
+          }
+          for (const { col, row, raw } of entries) {
+            setCellRaw(sheet, toAddress(col + dCol, row + dRow), shiftCellText(raw, dCol, dRow), allSheets, sheetIndex, settings);
+          }
+          setSelAnchor(toAddress(bounds.minCol + dCol, bounds.minRow + dRow));
+          setSelectedAddr(toAddress(bounds.maxCol + dCol, bounds.maxRow + dRow));
+          onSheetChange();
+        };
+        window.addEventListener("mousemove", handleMove);
+        window.addEventListener("mouseup", handleUp);
+        return;
+      }
+
+      // Plain mousedown: select the cell; dragging extends a rectangular selection
       setSelectedAddr(addr);
-      setSelAnchor(null); // clear multi-selection on click
+      setSelAnchor(null);
+      const handleMove = (ev: MouseEvent) => {
+        const td = (ev.target as HTMLElement).closest("td[data-addr]") as HTMLElement | null;
+        const overAddr = td?.dataset.addr;
+        if (!overAddr) return;
+        if (overAddr === addr) {
+          setSelAnchor(null);
+          setSelectedAddr(addr);
+        } else {
+          setSelAnchor(addr);
+          setSelectedAddr(overAddr);
+        }
+      };
+      const handleUp = () => {
+        window.removeEventListener("mousemove", handleMove);
+        window.removeEventListener("mouseup", handleUp);
+      };
+      window.addEventListener("mousemove", handleMove);
+      window.addEventListener("mouseup", handleUp);
     },
-    [editingAddr, sheet, allSheets, sheetIndex, onSheetChange]
+    [editingAddr, editingInBar, editValue, selectedAddr, selAnchor, sheet, allSheets, sheetIndex, settings, onSheetChange]
   );
 
   const handleCellDoubleClick = useCallback(
@@ -546,6 +640,14 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
 
   const selBounds = selectionBounds(selectedAddr, selAnchor);
   const isMultiSelect = selBounds !== null;
+  const movePreviewBounds = movePreview && selBounds
+    ? {
+        minCol: selBounds.minCol + movePreview.dCol,
+        maxCol: selBounds.maxCol + movePreview.dCol,
+        minRow: selBounds.minRow + movePreview.dRow,
+        maxRow: selBounds.maxRow + movePreview.dRow,
+      }
+    : null;
 
   return (
     <div className="grid-container" ref={gridRef} tabIndex={0} onKeyDown={handleGridKeyDown} onPaste={handlePaste}>
@@ -615,13 +717,14 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
                   const isActive = addr === selectedAddr;
                   const isEditing = addr === editingAddr;
                   const inSel = selBounds && c >= selBounds.minCol && c <= selBounds.maxCol && r >= selBounds.minRow && r <= selBounds.maxRow;
+                  const inMovePreview = movePreviewBounds && c >= movePreviewBounds.minCol && c <= movePreviewBounds.maxCol && r >= movePreviewBounds.minRow && r <= movePreviewBounds.maxRow;
 
                   return (
                     <td
                       key={c}
                       data-addr={addr}
-                      className={`cell ${isActive ? "selected" : ""} ${inSel && !isActive ? "in-selection" : ""} ${cell?.error ? "error" : ""} ${cell?.result?.kind === "samples" ? "has-distribution" : ""}${fillPreviewAddrs?.has(addr) ? " fill-preview" : ""}`}
-                      onClick={() => handleCellClick(addr)}
+                      className={`cell ${isActive ? "selected" : ""} ${inSel && !isActive ? "in-selection" : ""} ${cell?.error ? "error" : ""} ${cell?.result?.kind === "samples" ? "has-distribution" : ""}${fillPreviewAddrs?.has(addr) ? " fill-preview" : ""}${inSel ? " movable" : ""}${inMovePreview ? " move-preview" : ""}`}
+                      onMouseDown={(e) => handleCellMouseDown(e, addr)}
                       onDoubleClick={() => handleCellDoubleClick(addr)}
                     >
                       {isEditing ? (
