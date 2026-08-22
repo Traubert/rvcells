@@ -1583,7 +1583,9 @@ export function recalculateAllBulk(allSheets: Sheet[], settings = DEFAULT_SETTIN
     const { sheetIdx, addr } = fromGlobal(ga);
     if (allDupAddrs[sheetIdx].has(addr)) continue;
     const sheet = allSheets[sheetIdx];
-    const cell = sheet.cells.get(addr)!;
+    // Topo order includes referenced-but-empty addresses; nothing to evaluate there
+    const cell = sheet.cells.get(addr);
+    if (!cell) continue;
     const ctx: CrossSheetCtx = {
       allSheets,
       currentSheetIdx: sheetIdx,
@@ -1610,7 +1612,9 @@ export function recalculateAll(allSheets: Sheet[], settings = DEFAULT_SETTINGS):
     const { sheetIdx, addr } = fromGlobal(ga);
     if (allDupAddrs[sheetIdx].has(addr)) continue;
     const sheet = allSheets[sheetIdx];
-    const cell = sheet.cells.get(addr)!;
+    // Topo order includes referenced-but-empty addresses; nothing to evaluate there
+    const cell = sheet.cells.get(addr);
+    if (!cell) continue;
     const ctx: CrossSheetCtx = {
       allSheets,
       currentSheetIdx: sheetIdx,
@@ -1667,7 +1671,9 @@ export function recalculateAllFrom(
     const { sheetIdx, addr } = fromGlobal(ga);
     if (allDupAddrs[sheetIdx].has(addr)) continue;
     const sheet = allSheets[sheetIdx];
-    const cell = sheet.cells.get(addr)!;
+    // Dirty roots include just-deleted cells; nothing to evaluate there
+    const cell = sheet.cells.get(addr);
+    if (!cell) continue;
     const ctx: CrossSheetCtx = {
       allSheets,
       currentSheetIdx: sheetIdx,

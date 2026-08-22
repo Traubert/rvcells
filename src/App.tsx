@@ -305,7 +305,14 @@ export default function App() {
       setOpenDialogOpen(false);
       return;
     }
-    const result = deserializeFile(data);
+    let result;
+    try {
+      result = deserializeFile(data);
+    } catch (e) {
+      setImportError(`Failed to open workbook: ${(e as Error).message}`);
+      setOpenDialogOpen(false);
+      return;
+    }
     sheetsRef.current = result.sheets;
     settingsRef.current = result.settings;
     nameRef.current = result.name;
