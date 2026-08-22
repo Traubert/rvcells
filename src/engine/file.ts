@@ -1,7 +1,9 @@
-import type { Sheet, CellAddress, WorkbookSettings } from "./types";
+import type { Sheet, CellAddress, CellFormat, WorkbookSettings } from "./types";
 import { parseCell } from "./parser";
 import { recalculateAllBulk, createSheet } from "./evaluate";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_CHAIN_SEARCH_LIMIT } from "../constants";
+
+export const CURRENT_FILE_VERSION = 3;
 
 /** On-disk format — settings are sparse: only non-default values are stored */
 export interface FileFormat {
@@ -14,7 +16,29 @@ export interface FileFormat {
   sheets: Array<{
     name: string;
     cells: Record<string, string>; // addr → raw text
+    formats?: Record<string, CellFormat>; // addr → display format (sparse, v3+)
   }>;
+}
+
+/** Migrate an older file to the current version (a ladder of per-version
+ *  steps applied in sequence). Throws on files newer than this build or of
+ *  unknown vintage. Mutates nothing; returns the (possibly same) object. */
+export function migrateFile(file: FileFormat): FileFormat {
+  if (!file || typeof file.version !== "number" || !Array.isArray(file.sheets)) {
+    throw new Error("not a valid rvcells file");
+  }
+  if (file.version > CURRENT_FILE_VERSION) {
+    throw new Error(`file was saved with a newer version of rvcells (format v${file.version}, this build reads up to v${CURRENT_FILE_VERSION})`);
+  }
+  if (file.version < 2) {
+    throw new Error(`unsupported file format v${file.version}`);
+  }
+  let migrated = file;
+  if (migrated.version === 2) {
+    // v2 → v3: per-sheet cell formats added; absent means unformatted
+    migrated = { ...migrated, version: 3 };
+  }
+  return migrated;
 }
 
 /** Serialize multiple sheets to a saveable JSON object.
@@ -24,21 +48,29 @@ export function serializeFile(sheets: Sheet[], name: string, settings: WorkbookS
   if (settings.numSamples !== DEFAULT_NUM_SAMPLES) sparse.numSamples = settings.numSamples;
   if (settings.chainSearchLimit !== DEFAULT_CHAIN_SEARCH_LIMIT) sparse.chainSearchLimit = settings.chainSearchLimit;
   return {
-    version: 2,
+    version: CURRENT_FILE_VERSION,
     name,
     ...(Object.keys(sparse).length > 0 ? { settings: sparse } : {}),
     sheets: sheets.map((sheet) => {
       const cells: Record<string, string> = {};
+      const formats: Record<string, CellFormat> = {};
       for (const [addr, cell] of sheet.cells) {
         cells[addr] = cell.raw;
+        if (cell.format) formats[addr] = cell.format;
       }
-      return { name: sheet.name, cells };
+      return {
+        name: sheet.name,
+        cells,
+        ...(Object.keys(formats).length > 0 ? { formats } : {}),
+      };
     }),
   };
 }
 
-/** Deserialize a file into a name, array of sheets, and settings. */
-export function deserializeFile(file: FileFormat): { name: string; sheets: Sheet[]; settings: WorkbookSettings } {
+/** Deserialize a file into a name, array of sheets, and settings.
+ *  Accepts any supported older version (migrated up transparently). */
+export function deserializeFile(input: FileFormat): { name: string; sheets: Sheet[]; settings: WorkbookSettings } {
+  const file = migrateFile(input);
   const settings: WorkbookSettings = {
     numSamples: file.settings?.numSamples ?? DEFAULT_NUM_SAMPLES,
     chainSearchLimit: file.settings?.chainSearchLimit ?? DEFAULT_CHAIN_SEARCH_LIMIT,
@@ -65,7 +97,8 @@ export function deserializeFile(file: FileFormat): { name: string; sheets: Sheet
 
     for (const [addr, raw] of Object.entries(sheetData.cells)) {
       const { content, variableName, labelVar } = parseCell(raw);
-      sheet.cells.set(addr as CellAddress, { raw, content, variableName, labelVar });
+      const format = sheetData.formats?.[addr];
+      sheet.cells.set(addr as CellAddress, { raw, content, variableName, labelVar, format });
     }
 
     return sheet;
@@ -106,12 +139,10 @@ export function openFromFile(): Promise<{ name: string; sheets: Sheet[]; setting
       try {
         const text = await file.text();
         const data = JSON.parse(text) as FileFormat;
-        if (data.version !== 2 || !Array.isArray(data.sheets)) {
-          throw new Error("not a valid rvcells file");
-        }
-        resolve(deserializeFile(data));
-      } catch {
-        resolve({ error: `Could not parse "${file.name}" — skipping.` });
+        resolve(deserializeFile(data)); // migrates older versions, throws on invalid/newer
+      } catch (e) {
+        const detail = e instanceof SyntaxError ? "" : ` (${(e as Error).message})`;
+        resolve({ error: `Could not open "${file.name}"${detail} — skipping.` });
       }
     };
     input.click();

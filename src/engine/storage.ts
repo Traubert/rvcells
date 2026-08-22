@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import type { FileFormat } from "./file";
+import { migrateFile } from "./file";
 
 const PREFIX = "rvcells:";
 const INDEX_KEY = PREFIX + "index";
@@ -162,11 +163,7 @@ export async function importFromZip(file: File): Promise<{
     if (entry.dir || !path.endsWith(".json")) continue;
     try {
       const text = await entry.async("string");
-      const data = JSON.parse(text) as FileFormat;
-      if (data.version !== 2 || !Array.isArray(data.sheets)) {
-        errors.push(`${path}: invalid file format`);
-        continue;
-      }
+      const data = migrateFile(JSON.parse(text) as FileFormat); // throws on invalid/newer
       const originalName = data.name || path.replace(/\.json$/, "");
       const uniqueName = uniqueWorkbookName(originalName, batchNames);
       if (uniqueName !== originalName) {

@@ -56,12 +56,21 @@ export interface InlineSample {
   values: Float64Array;
 }
 
+/** Display formatting for a cell. Percent and currency are format-string
+ *  presets ("{%}", "{.2} €"), not separate fields. */
+export interface CellFormat {
+  sigFigs?: number;      // significant figures (default 3 when absent)
+  bold?: boolean;
+  formatString?: string; // template with a placeholder: {} plain, {%} ×100+%, {.n} fixed decimals
+}
+
 /** Full cell state */
 export interface Cell {
   raw: string; // what the user typed
   content: CellContent;
   variableName?: string; // if the cell defines a variable (e.g. "income = ...")
   labelVar?: boolean; // if true, variable name is derived from the text cell to the left
+  format?: CellFormat; // display formatting; survives content edits, cleared with the cell
   result?: CellResult;
   error?: string;
   inlineSamples?: InlineSample[]; // captured during evaluation for sensitivity analysis

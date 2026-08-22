@@ -1,4 +1,4 @@
-import type { Cell, CellAddress, CellResult, Expr, MarkovInit, MarkovStateDef, Sheet, WorkbookSettings } from "./types";
+import type { Cell, CellAddress, CellFormat, CellResult, Expr, MarkovInit, MarkovStateDef, Sheet, WorkbookSettings } from "./types";
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
@@ -1751,7 +1751,9 @@ export function setCellRaw(
   }
 
   const { content, variableName, labelVar } = parseCell(raw);
-  const cell: Cell = { raw, content, variableName, labelVar };
+  // Formatting survives content edits; it dies only with the cell (empty raw above)
+  const prevFormat = sheet.cells.get(addr)?.format;
+  const cell: Cell = { raw, content, variableName, labelVar, format: prevFormat };
 
   // Check for cycles before committing the edit
   if (content.kind === "formula") {
@@ -1803,6 +1805,23 @@ export function setCellRaw(
 
   recalculateAllFrom(sheets, si, dirty, settings);
   return cell;
+}
+
+/** Merge a formatting patch into a cell (null clears all formatting).
+ *  Display-only — no recalculation needed. No-op on empty cells. */
+export function setCellFormat(sheet: Sheet, addr: CellAddress, patch: Partial<CellFormat> | null): void {
+  const cell = sheet.cells.get(addr);
+  if (!cell) return;
+  if (patch === null) {
+    cell.format = undefined;
+    return;
+  }
+  const merged: CellFormat = { ...cell.format, ...patch };
+  // Drop unset fields so an all-empty format disappears entirely
+  if (merged.sigFigs === undefined) delete merged.sigFigs;
+  if (!merged.bold) delete merged.bold;
+  if (merged.formatString === undefined || merged.formatString === "") delete merged.formatString;
+  cell.format = Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 /**

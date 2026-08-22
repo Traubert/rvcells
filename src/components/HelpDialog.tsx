@@ -162,6 +162,16 @@ const PAGES = [
           </table>
         </section>
         <section>
+          <h3>Formatting</h3>
+          <p className="help-note">
+            The <strong>Format</strong> menu applies display formatting to the selected cells:
+            significant figures, percentage (<code>{"{%}"}</code>), currency (<code>{"{.2} €"}</code>),
+            bold, or a custom format string — text with a placeholder for the value, e.g.{" "}
+            <code>{"{.2} €/kk"}</code> or <code>{"~{} kg"}</code>. Formatting affects display only,
+            never the computed values.
+          </p>
+        </section>
+        <section>
           <h3>Clipboard &amp; undo</h3>
           <table className="help-table">
             <tbody>

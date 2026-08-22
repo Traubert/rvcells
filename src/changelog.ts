@@ -37,6 +37,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 26, summary: "Sample trajectories overlay in the Timeline fan chart (random / stratified by final value / stratified by trajectory mean)" },
   { version: 27, summary: "Mouse multi-cell selection: drag to select, shift+click to extend, drag a selection to move it" },
   { version: 28, summary: "Stricter reference semantics: direct references to empty or text cells now error instead of silently becoming 0; range functions (sum, mean, …) skip empty and text cells" },
+  { version: 29, summary: "Cell formatting via the Format menu: significant figures, percentage, currency, bold, and custom format strings ({} plain, {%} percent, {.2} fixed decimals)" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

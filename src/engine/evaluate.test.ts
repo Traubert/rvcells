@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSheet, setCellRaw, recalculateAll, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, histogram, DEFAULT_SETTINGS } from "./evaluate";
+import { createSheet, setCellRaw, setCellFormat, recalculateAll, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, histogram, DEFAULT_SETTINGS } from "./evaluate";
 import type { Sheet, WorkbookSettings } from "./types";
 import { parseCell } from "./parser";
 
@@ -1425,5 +1425,44 @@ describe("ranges over empty and text cells", () => {
     setCellRaw(sheet, "A3", "=Z9*2"); // errors: Z9 empty
     setCellRaw(sheet, "C1", "=sum(A1:A4)");
     expect(sheet.cells.get("C1")?.error).toBe("A3 has an error");
+  });
+});
+
+describe("cell formatting", () => {
+  it("setCellFormat merges patches and drops empty formats", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "5");
+    setCellFormat(sheet, "A1", { sigFigs: 4 });
+    setCellFormat(sheet, "A1", { bold: true });
+    expect(sheet.cells.get("A1")?.format).toEqual({ sigFigs: 4, bold: true });
+    setCellFormat(sheet, "A1", { bold: false });
+    expect(sheet.cells.get("A1")?.format).toEqual({ sigFigs: 4 });
+    setCellFormat(sheet, "A1", { sigFigs: undefined });
+    expect(sheet.cells.get("A1")?.format).toBeUndefined();
+  });
+
+  it("clear (null) removes all formatting", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "5");
+    setCellFormat(sheet, "A1", { sigFigs: 4, bold: true, formatString: "{.2} €" });
+    setCellFormat(sheet, "A1", null);
+    expect(sheet.cells.get("A1")?.format).toBeUndefined();
+  });
+
+  it("is a no-op on empty cells", () => {
+    const sheet = createSheet();
+    setCellFormat(sheet, "A1", { bold: true });
+    expect(sheet.cells.has("A1")).toBe(false);
+  });
+
+  it("format survives editing the cell content", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "5");
+    setCellFormat(sheet, "A1", { formatString: "{.2} €" });
+    setCellRaw(sheet, "A1", "=2+3");
+    expect(sheet.cells.get("A1")?.format).toEqual({ formatString: "{.2} €" });
+    setCellRaw(sheet, "A1", "");
+    setCellRaw(sheet, "A1", "7");
+    expect(sheet.cells.get("A1")?.format).toBeUndefined();
   });
 });

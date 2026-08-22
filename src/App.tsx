@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Grid } from "./components/Grid";
+import type { GridFormatApi, FormatAction } from "./components/Grid";
 import { TabBar } from "./components/TabBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { OpenDialog } from "./components/OpenDialog";
+import { FormatStringDialog } from "./components/FormatStringDialog";
 import { createSheet, recalculateAll, recalculateAllBulk, renameSheet, findRefsToSheet, DEFAULT_SETTINGS } from "./engine/evaluate";
-import { saveToFile, openFromFile, serializeFile, deserializeFile } from "./engine/file";
+import { saveToFile, openFromFile, serializeFile, deserializeFile, CURRENT_FILE_VERSION } from "./engine/file";
 import type { WorkbookSettings } from "./engine/types";
 import { storageAvailable, saveWorkbook, loadWorkbook, listWorkbooks, generateId, uniqueWorkbookName, exportAllAsZip, importFromZip } from "./engine/storage";
 import type { WorkbookEntry } from "./engine/storage";
@@ -62,7 +64,7 @@ type Snapshot = {
   name: string;
   settings: WorkbookSettings;
   activeIndex: number;
-  sheets: Array<{ name: string; cells: Record<string, string> }>;
+  sheets: FileFormat["sheets"];
 };
 
 const MAX_HISTORY = 100;
@@ -84,6 +86,21 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [, setVersion] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [formatMenuOpen, setFormatMenuOpen] = useState(false);
+  const [sigFigsOpen, setSigFigsOpen] = useState(false);
+  const [formatStringDialog, setFormatStringDialog] = useState<{ initial: string } | null>(null);
+  const gridFormatApiRef = useRef<GridFormatApi | null>(null);
+
+  const closeFormatMenu = useCallback(() => {
+    setFormatMenuOpen(false);
+    setSigFigsOpen(false);
+  }, []);
+
+  const applyFormat = useCallback((action: FormatAction) => {
+    gridFormatApiRef.current?.applyFormat(action);
+    closeFormatMenu();
+  }, [closeFormatMenu]);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -140,11 +157,7 @@ export default function App() {
       name: nameRef.current,
       settings: { ...settingsRef.current },
       activeIndex: activeIndexRef.current,
-      sheets: sheetsRef.current.map((sheet) => {
-        const cells: Record<string, string> = {};
-        for (const [addr, cell] of sheet.cells) cells[addr] = cell.raw;
-        return { name: sheet.name, cells };
-      }),
+      sheets: serializeFile(sheetsRef.current, nameRef.current, settingsRef.current).sheets,
     };
   }
 
@@ -168,7 +181,7 @@ export default function App() {
 
   const restoreSnapshot = useCallback((snap: Snapshot) => {
     const fileFormat: FileFormat = {
-      version: 2,
+      version: CURRENT_FILE_VERSION,
       name: snap.name,
       settings: snap.settings,
       sheets: snap.sheets,
@@ -374,6 +387,7 @@ export default function App() {
     const stack: (() => void)[] = [];
     if (settingsOpen) stack.push(() => setSettingsOpen(false));
     if (openDialogOpen) stack.push(() => setOpenDialogOpen(false));
+    if (formatStringDialog) stack.push(() => setFormatStringDialog(null));
     if (aboutOpen) stack.push(() => setAboutOpen(false));
     if (splash) stack.push(handleDismissSplash);
     if (helpOpen) stack.push(() => setHelpOpen(false));
@@ -528,12 +542,18 @@ export default function App() {
   }, [commitChange, setActiveIdx]);
 
   return (
-    <div className="app" onClick={() => menuOpen && setMenuOpen(false)}>
+    <div
+      className="app"
+      onClick={() => {
+        if (menuOpen) setMenuOpen(false);
+        if (formatMenuOpen) closeFormatMenu();
+      }}
+    >
       <header className="app-header">
         <div className="menu-container">
           <button
             className="menu-trigger"
-            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); closeFormatMenu(); }}
           >
             rvcells <span className="menu-caret">&#9662;</span>
           </button>
@@ -551,6 +571,47 @@ export default function App() {
               <button className="menu-item" onClick={() => { setSettingsOpen(true); setMenuOpen(false); }}>Settings</button>
               <button className="menu-item" onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>About</button>
               <button className="menu-item" onClick={() => { setHelpOpen(true); setMenuOpen(false); }}>Help</button>
+            </div>
+          )}
+        </div>
+        <div className="menu-container">
+          <button
+            className="menu-trigger menu-trigger-secondary"
+            onClick={(e) => { e.stopPropagation(); setFormatMenuOpen(!formatMenuOpen); setSigFigsOpen(false); setMenuOpen(false); }}
+          >
+            Format <span className="menu-caret">&#9662;</span>
+          </button>
+          {formatMenuOpen && (
+            <div className="menu-dropdown">
+              <button
+                className="menu-item"
+                onClick={(e) => { e.stopPropagation(); setSigFigsOpen(!sigFigsOpen); }}
+              >
+                Significant figures <span className="menu-shortcut">{sigFigsOpen ? "▾" : "▸"}</span>
+              </button>
+              {sigFigsOpen && (
+                <div className="menu-subrow">
+                  {[1, 2, 3, 4, 5, 6].map((n) => (
+                    <button key={n} className="menu-subbtn" onClick={() => applyFormat({ kind: "sigFigs", value: n })}>{n}</button>
+                  ))}
+                  <button className="menu-subbtn" onClick={() => applyFormat({ kind: "sigFigs", value: null })}>auto</button>
+                </div>
+              )}
+              <div className="menu-divider" />
+              <button className="menu-item" onClick={() => applyFormat({ kind: "formatString", value: "{%}" })}>Format as percentage</button>
+              <button className="menu-item" onClick={() => applyFormat({ kind: "formatString", value: "{.2} €" })}>Format as currency</button>
+              <button className="menu-item" onClick={() => applyFormat({ kind: "boldToggle" })}>Bold</button>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  setFormatStringDialog({ initial: gridFormatApiRef.current?.activeFormatString() ?? "" });
+                  closeFormatMenu();
+                }}
+              >
+                Format string…
+              </button>
+              <div className="menu-divider" />
+              <button className="menu-item" onClick={() => applyFormat({ kind: "clear" })}>Clear formatting</button>
             </div>
           )}
         </div>
@@ -611,6 +672,7 @@ export default function App() {
         onShowHelp={() => setHelpOpen(true)}
         onSave={handleStorageSave}
         onOpen={handleStorageOpen}
+        formatApi={gridFormatApiRef}
       />
       {aboutOpen && (
         <AboutDialog
@@ -636,6 +698,13 @@ export default function App() {
           onOpen={handleOpenWorkbook}
           onClose={() => setOpenDialogOpen(false)}
           onRefresh={() => setOpenDialogWorkbooks(listWorkbooks())}
+        />
+      )}
+      {formatStringDialog && (
+        <FormatStringDialog
+          initial={formatStringDialog.initial}
+          onApply={(fs) => gridFormatApiRef.current?.applyFormat({ kind: "formatString", value: fs })}
+          onClose={() => setFormatStringDialog(null)}
         />
       )}
       {confirmDelete && (

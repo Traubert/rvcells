@@ -265,6 +265,65 @@
   margin-left: 24px;
 }
 
+/* Secondary menus (Format) — smaller than the brand trigger */
+.menu-trigger-secondary {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+}
+
+/* Inline sub-row inside a dropdown (e.g. sig fig choices) */
+.menu-subrow {
+  display: flex;
+  gap: 2px;
+  padding: 2px 12px 6px;
+}
+
+.menu-subbtn {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--recessed-bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.menu-subbtn:hover {
+  background: var(--hover-overlay-mid);
+  color: var(--text-bright);
+  border-color: var(--accent);
+}
+
+/* Format string dialog */
+.format-string-dialog {
+  max-width: 440px;
+}
+
+.format-string-input {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text-bright);
+  background: var(--recessed-bg-strong);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+  margin: 8px 0 4px;
+}
+
+.format-string-input:focus {
+  border-color: var(--accent);
+}
+
+.format-string-invalid {
+  color: var(--error);
+  font-size: 12px;
+  margin: 2px 0 4px;
+}
+
 /* Save flash */
 .save-flash {
   font-family: var(--font-ui);

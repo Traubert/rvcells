@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import type { Sheet, CellAddress, Cell, WorkbookSettings } from "../engine/types";
+import type { Sheet, CellAddress, Cell, CellFormat, WorkbookSettings } from "../engine/types";
 import { toAddress, parseAddress } from "../engine/types";
-import { setCellRaw, summarize, recalculateAll, recalculateAllFrom } from "../engine/evaluate";
-import { formatNumber } from "../format";
+import { setCellRaw, setCellFormat, summarize, recalculateAll, recalculateAllFrom } from "../engine/evaluate";
+import { formatValue, formatNumberSpec, parseFormatString } from "../format";
 import { shiftCellText } from "../engine/fill";
 import { DetailPanel, type LockedRange } from "./DetailPanel";
 
@@ -10,7 +10,40 @@ import { DetailPanel, type LockedRange } from "./DetailPanel";
 interface ClipboardData {
   originCol: number;
   originRow: number;
-  grid: (string | null)[][]; // [row][col], null = empty cell
+  grid: ({ raw: string; format?: CellFormat } | null)[][]; // [row][col], null = empty cell
+}
+
+/** Formatting command from the Format menu, applied to the current selection */
+export type FormatAction =
+  | { kind: "sigFigs"; value: number | null }
+  | { kind: "formatString"; value: string | null }
+  | { kind: "boldToggle" }
+  | { kind: "clear" };
+
+/** Imperative handle the Format menu (in App) uses to reach the grid selection */
+export interface GridFormatApi {
+  applyFormat: (action: FormatAction) => void;
+  activeFormatString: () => string;
+}
+
+/** Overwrite a cell's format with a copy of the source's (paste/fill/move) */
+function assignFormat(sheet: Sheet, addr: CellAddress, format: CellFormat | undefined): void {
+  const cell = sheet.cells.get(addr);
+  if (cell) cell.format = format ? { ...format } : undefined;
+}
+
+/** Split a format for the two-part "mean ± std" display: scaling and sig figs
+ *  apply to both numbers, the template wraps the composite. */
+function distributionParts(format: CellFormat | undefined, mean: number, std: number) {
+  const sigFigs = format?.sigFigs ?? 3;
+  const parsed = format?.formatString ? parseFormatString(format.formatString) : null;
+  const spec = parsed?.spec ?? { kind: "plain" as const };
+  return {
+    prefix: parsed?.prefix ?? "",
+    suffix: parsed?.suffix ?? "",
+    mean: formatNumberSpec(mean, spec, sigFigs),
+    std: formatNumberSpec(std, spec, sigFigs),
+  };
 }
 
 const NUM_COLS = 26;
@@ -47,9 +80,10 @@ interface GridProps {
   onShowHelp?: () => void;
   onSave?: () => void;
   onOpen?: () => void;
+  formatApi?: React.MutableRefObject<GridFormatApi | null>;
 }
 
-export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, onShowHelp, onSave, onOpen }: GridProps) {
+export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, onShowHelp, onSave, onOpen, formatApi }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
@@ -159,14 +193,18 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
           const step = dRow > 0 ? 1 : -1;
           for (let r = orig.row + step; step > 0 ? r <= target.row : r >= target.row; r += step) {
             const shifted = shiftCellText(sourceCell.raw, 0, r - orig.row);
-            setCellRaw(sheet, toAddress(orig.col, r), shifted, allSheets, sheetIndex, settings);
+            const fillAddr = toAddress(orig.col, r);
+            setCellRaw(sheet, fillAddr, shifted, allSheets, sheetIndex, settings);
+            assignFormat(sheet, fillAddr, sourceCell.format);
           }
         } else {
           // Fill horizontally
           const step = dCol > 0 ? 1 : -1;
           for (let c = orig.col + step; step > 0 ? c <= target.col : c >= target.col; c += step) {
             const shifted = shiftCellText(sourceCell.raw, c - orig.col, 0);
-            setCellRaw(sheet, toAddress(c, orig.row), shifted, allSheets, sheetIndex, settings);
+            const fillAddr = toAddress(c, orig.row);
+            setCellRaw(sheet, fillAddr, shifted, allSheets, sheetIndex, settings);
+            assignFormat(sheet, fillAddr, sourceCell.format);
           }
         }
 
@@ -266,11 +304,11 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
           const { dCol, dRow } = lastDelta;
           if (dCol === 0 && dRow === 0) return; // dragged back home: cancel
           // Collect source contents first so overlapping source/target ranges work
-          const entries: { col: number; row: number; raw: string }[] = [];
+          const entries: { col: number; row: number; raw: string; format?: CellFormat }[] = [];
           for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
             for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
-              const raw = sheet.cells.get(toAddress(c, r))?.raw;
-              if (raw) entries.push({ col: c, row: r, raw });
+              const srcCell = sheet.cells.get(toAddress(c, r));
+              if (srcCell?.raw) entries.push({ col: c, row: r, raw: srcCell.raw, format: srcCell.format });
             }
           }
           for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
@@ -278,8 +316,10 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
               setCellRaw(sheet, toAddress(c, r), "", allSheets, sheetIndex, settings);
             }
           }
-          for (const { col, row, raw } of entries) {
-            setCellRaw(sheet, toAddress(col + dCol, row + dRow), shiftCellText(raw, dCol, dRow), allSheets, sheetIndex, settings);
+          for (const { col, row, raw, format } of entries) {
+            const moveAddr = toAddress(col + dCol, row + dRow);
+            setCellRaw(sheet, moveAddr, shiftCellText(raw, dCol, dRow), allSheets, sheetIndex, settings);
+            assignFormat(sheet, moveAddr, format);
           }
           setSelAnchor(toAddress(bounds.minCol + dCol, bounds.minRow + dRow));
           setSelectedAddr(toAddress(bounds.maxCol + dCol, bounds.maxRow + dRow));
@@ -379,10 +419,51 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
       if (cell?.content.kind === "text") return cell.content.value;
       return "";
     }
-    if (cell.result.kind === "scalar") return formatNumber(cell.result.value);
+    if (cell.result.kind === "scalar") return formatValue(cell.result.value, cell.format);
     const stats = summarize(cell.result);
-    return `${formatNumber(stats.mean)} ± ${formatNumber(stats.std)}`;
+    const p = distributionParts(cell.format, stats.mean, stats.std);
+    return `${p.prefix}${p.mean} ± ${p.std}${p.suffix}`;
   }
+
+  // Register the Format-menu API (App owns the menu, the grid owns the selection)
+  useEffect(() => {
+    if (!formatApi) return;
+    formatApi.current = {
+      applyFormat: (action: FormatAction) => {
+        const range = getSelectionRange();
+        if (!range) return;
+        let patch: Partial<CellFormat> | null;
+        switch (action.kind) {
+          case "sigFigs":
+            patch = { sigFigs: action.value ?? undefined };
+            break;
+          case "formatString":
+            patch = { formatString: action.value ?? undefined };
+            break;
+          case "boldToggle": {
+            // Toggle based on the active cell, apply uniformly to the selection
+            const active = selectedAddr ? sheet.cells.get(selectedAddr)?.format?.bold : false;
+            patch = { bold: !active };
+            break;
+          }
+          case "clear":
+            patch = null;
+            break;
+        }
+        for (let r = range.minRow; r <= range.maxRow; r++) {
+          for (let c = range.minCol; c <= range.maxCol; c++) {
+            setCellFormat(sheet, toAddress(c, r), patch);
+          }
+        }
+        onSheetChange();
+      },
+      activeFormatString: () =>
+        (selectedAddr ? sheet.cells.get(selectedAddr)?.format?.formatString : undefined) ?? "",
+    };
+    return () => {
+      formatApi.current = null;
+    };
+  }, [formatApi, getSelectionRange, selectedAddr, sheet, onSheetChange]);
 
   /** Copy/cut selected cells */
   const copySelection = useCallback((cut: boolean, resolved: boolean) => {
@@ -390,10 +471,10 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
     if (!range) return;
 
     const rows: string[][] = [];
-    const rawGrid: (string | null)[][] = [];
+    const rawGrid: ClipboardData["grid"] = [];
     for (let r = range.minRow; r <= range.maxRow; r++) {
       const row: string[] = [];
-      const rawRow: (string | null)[] = [];
+      const rawRow: ClipboardData["grid"][number] = [];
       for (let c = range.minCol; c <= range.maxCol; c++) {
         const addr = toAddress(c, r);
         const cell = sheet.cells.get(addr);
@@ -402,7 +483,7 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
         } else {
           row.push(cell?.raw ?? "");
         }
-        rawRow.push(cell?.raw ?? null);
+        rawRow.push(cell ? { raw: cell.raw, format: cell.format } : null);
       }
       rows.push(row);
       rawGrid.push(rawRow);
@@ -449,7 +530,7 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
     // Use internal clipboard if we have one and the system clipboard matches
     // (i.e. the user copied from rvcells, not from another app)
     const internalTsv = internal
-      ? internal.grid.map((r) => r.map((c) => c ?? "").join("\t")).join("\n")
+      ? internal.grid.map((r) => r.map((c) => c?.raw ?? "").join("\t")).join("\n")
       : null;
 
     if (internal && internalTsv === systemText) {
@@ -458,10 +539,12 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
       const dRow = target.row - internal.originRow;
       for (let r = 0; r < internal.grid.length; r++) {
         for (let c = 0; c < internal.grid[r].length; c++) {
-          const raw = internal.grid[r][c];
-          if (raw === null) continue;
-          const shifted = shiftCellText(raw, dCol, dRow);
-          setCellRaw(sheet, toAddress(target.col + c, target.row + r), shifted, allSheets, sheetIndex, settings);
+          const entry = internal.grid[r][c];
+          if (entry === null) continue;
+          const shifted = shiftCellText(entry.raw, dCol, dRow);
+          const pasteAddr = toAddress(target.col + c, target.row + r);
+          setCellRaw(sheet, pasteAddr, shifted, allSheets, sheetIndex, settings);
+          assignFormat(sheet, pasteAddr, entry.format);
         }
       }
     } else if (systemText) {
@@ -776,37 +859,45 @@ function CellDisplay({ cell }: { cell: Cell | undefined }) {
     return null;
   }
 
+  const boldStyle = cell.format?.bold ? { fontWeight: 600 as const } : undefined;
+
   if (cell.error) {
     return <span className="cell-error" title={cell.error}>⚠ {cell.error}</span>;
   }
 
   if (!cell.result) {
     if (cell.content.kind === "text") {
-      return <span className="cell-text">{cell.content.value}</span>;
+      return <span className="cell-text" style={boldStyle}>{cell.content.value}</span>;
     }
     return null;
   }
 
   if (cell.chainBody) {
     const initDisplay = cell.result.kind === "scalar"
-      ? formatNumber(cell.result.value)
-      : formatNumber(summarize(cell.result).mean);
-    return <span className="cell-chain" title="Chain (click to step through)">⟳ {initDisplay}</span>;
+      ? formatValue(cell.result.value, cell.format)
+      : formatValue(summarize(cell.result).mean, cell.format);
+    return <span className="cell-chain" style={boldStyle} title="Chain (click to step through)">⟳ {initDisplay}</span>;
   }
 
   if (cell.result.kind === "scalar") {
-    return <span className="cell-scalar">{formatNumber(cell.result.value)}</span>;
+    return <span className="cell-scalar" style={boldStyle}>{formatValue(cell.result.value, cell.format)}</span>;
   }
 
   // Distribution result — show mean ± std, color intensity reflects uncertainty
   const stats = summarize(cell.result);
   const uncertainty = uncertaintyFraction(stats.mean, stats.std);
   const color = uncertaintyColor(uncertainty);
+  const p = distributionParts(cell.format, stats.mean, stats.std);
 
   return (
-    <span className="cell-distribution" style={{ color }} title={`P5: ${formatNumber(stats.p5)} | P95: ${formatNumber(stats.p95)}`}>
-      {formatNumber(stats.mean)}
-      <span className="cell-spread" style={{ opacity: 0.3 + 0.7 * uncertainty }}> ±{formatNumber(stats.std)}</span>
+    <span
+      className="cell-distribution"
+      style={{ color, ...boldStyle }}
+      title={`P5: ${formatValue(stats.p5, cell.format)} | P95: ${formatValue(stats.p95, cell.format)}`}
+    >
+      {p.prefix}{p.mean}
+      <span className="cell-spread" style={{ opacity: 0.3 + 0.7 * uncertainty }}> ±{p.std}</span>
+      {p.suffix}
     </span>
   );
 }

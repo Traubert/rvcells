@@ -17,7 +17,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
 - `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex search, Markov compilation and evaluation, summary stats, histograms, sheet rename/delete helpers
 - `src/engine/storage.ts` — localStorage persistence, zip mass export/import
-- `src/engine/file.ts` — JSON file format v2 (multi-sheet), import/export
+- `src/engine/file.ts` — JSON file format v3 (multi-sheet, cell formats), migration ladder for older versions, import/export
 - `src/constants.ts` — shared string, numeric, and distribution name constants
 - `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
@@ -27,6 +27,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/components/OpenDialog.tsx` — browser storage open/delete dialog
 - `src/components/TabBar.tsx` — sheet tab bar with add/close/rename
 - `src/components/ConfirmDialog.tsx` — reusable confirmation dialog
+- `src/components/FormatStringDialog.tsx` — format string editor dialog (Format menu)
 
 ## Core Concepts
 
@@ -121,7 +122,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
   - [x] Mass export/import as zip bundle of all saved workbooks
 - [x] Undo/redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z) — full state snapshots, max 100 levels
   - [ ] Undo tree?
-- [ ] Cell formatting (labels, number formats)
+- [x] Cell formatting via Format menu, applied per cell to the selection: significant figures, bold, and format strings (template with `{}` plain / `{%}` ×100+% / `{.n}` fixed-decimals-when-they-survive-rounding placeholders); percentage and currency are format-string presets (`{%}`, `{.2} €`). Stored as `CellFormat` on the cell, survives content edits, travels with copy/paste/fill/move, persisted in file format v3 (older files migrate transparently)
 - [x] Functions on ranges: sum, product, mean, median, geomean, min, max, P
   - Cell ranges (`A1:A10`), chain step ranges (`income[0:11]`, `income[:11]`), bracket index (`income[5]`)
   - Arity-based disambiguation: multiple values → elementwise aggregate; single distribution → scalar collapse
