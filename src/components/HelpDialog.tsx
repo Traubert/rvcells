@@ -81,7 +81,7 @@ const PAGES = [
         </section>
         <section>
           <h3>Aggregates</h3>
-          <p className="help-note">Accept ranges (<code>A1:A10</code>) and chain steps (<code>x[0:12]</code>). With a single distribution argument, collapse to a scalar statistic.</p>
+          <p className="help-note">Accept ranges (<code>A1:A10</code>) and chain steps (<code>x[0:12]</code>). With a single distribution argument, collapse to a scalar statistic. Ranges skip empty and text cells; a direct reference to an empty or text cell is an error.</p>
           <table className="help-table">
             <tbody>
               <tr><td><code>sum(...)</code></td><td>Sum of values</td></tr>

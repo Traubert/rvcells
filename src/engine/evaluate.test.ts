@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSheet, setCellRaw, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, histogram, DEFAULT_SETTINGS } from "./evaluate";
+import { createSheet, setCellRaw, recalculateAll, summarize, recalculateBulk, recalculateAllBulk, renameSheet, findRefsToSheet, collectInputs, spearmanCorrelation, histogram, DEFAULT_SETTINGS } from "./evaluate";
 import type { Sheet, WorkbookSettings } from "./types";
 import { parseCell } from "./parser";
 
@@ -124,9 +124,9 @@ describe("scalar arithmetic", () => {
     expect(scalarValue(sheet, "D1")).toBe(5);
   });
 
-  it("referencing an empty cell gives 0", () => {
+  it("referencing an empty cell is an error", () => {
     const sheet = makeSheet({ B1: "= A1 + 1" });
-    expect(scalarValue(sheet, "B1")).toBe(1);
+    expect(sheet.cells.get("B1")?.error).toBe("Reference to empty cell A1");
   });
 });
 
@@ -1328,5 +1328,102 @@ describe("aggregate functions", () => {
       expect(h.bins[0]).toBe(n / 2);
       expect(h.bins[h.bins.length - 1]).toBe(n / 2);
     });
+  });
+});
+
+describe("references to empty cells", () => {
+  // Regression: the topo order includes referenced-but-empty addresses, and the
+  // eval loops crashed on them ("Cannot set properties of undefined") — which
+  // made any workbook containing such a formula impossible to load.
+  it("bulk recalc survives formulas over empty cells (file load path)", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "E1", "10");
+    setCellRaw(sheet, "E2", "20");
+    setCellRaw(sheet, "H1", "=sum(E1:E4)"); // E3, E4 empty
+    setCellRaw(sheet, "H2", "=A9+1"); // direct ref to empty cell
+    recalculateAllBulk([sheet]);
+    expect(sheet.cells.get("H1")?.error).toBeUndefined();
+    expect(sheet.cells.get("H1")?.result).toEqual({ kind: "scalar", value: 30 });
+    expect(sheet.cells.get("H2")?.error).toBe("Reference to empty cell A9");
+  });
+
+  it("full recalc survives formulas over empty cells", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "B1", "=A1+1");
+    recalculateAll([sheet]);
+    expect(sheet.cells.get("B1")?.error).toBe("Reference to empty cell A1");
+  });
+
+  it("direct reference to an empty cell is an error, and clears when filled", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "B1", "=A1+1");
+    expect(sheet.cells.get("B1")?.error).toBe("Reference to empty cell A1");
+    setCellRaw(sheet, "A1", "5");
+    expect(sheet.cells.get("B1")?.error).toBeUndefined();
+    expect(sheet.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 6 });
+  });
+
+  it("deleting a referenced cell errors dependents instead of crashing", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "5");
+    setCellRaw(sheet, "B1", "=A1+1");
+    expect(sheet.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 6 });
+    setCellRaw(sheet, "A1", "");
+    expect(sheet.cells.get("B1")?.error).toBe("Reference to empty cell A1");
+    expect(sheet.cells.get("B1")?.result).toBeUndefined();
+  });
+
+  it("direct reference to a text cell is an error", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "some label");
+    setCellRaw(sheet, "B1", "=A1*2");
+    expect(sheet.cells.get("B1")?.error).toBe("Reference to text cell A1");
+  });
+
+  it("errors propagate through direct references instead of becoming 0", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "=B9+1"); // errors: B9 empty
+    setCellRaw(sheet, "A2", "=A1*2");
+    expect(sheet.cells.get("A2")?.error).toBe("A1 has an error");
+  });
+});
+
+describe("ranges over empty and text cells", () => {
+  function sheetWithGaps(): Sheet {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "10");
+    setCellRaw(sheet, "A2", "20");
+    // A3 empty, A4 is a label
+    setCellRaw(sheet, "A4", "label");
+    return sheet;
+  }
+
+  it("skips empty and text cells instead of counting zeros", () => {
+    const sheet = sheetWithGaps();
+    setCellRaw(sheet, "C1", "=sum(A1:A4)");
+    setCellRaw(sheet, "C2", "=mean(A1:A4)");
+    setCellRaw(sheet, "C3", "=product(A1:A4)");
+    setCellRaw(sheet, "C4", "=min(A1:A4)");
+    setCellRaw(sheet, "C5", "=median(A1:A4)");
+    expect(sheet.cells.get("C1")?.result).toEqual({ kind: "scalar", value: 30 });
+    expect(sheet.cells.get("C2")?.result).toEqual({ kind: "scalar", value: 15 });
+    expect(sheet.cells.get("C3")?.result).toEqual({ kind: "scalar", value: 200 });
+    expect(sheet.cells.get("C4")?.result).toEqual({ kind: "scalar", value: 10 });
+    expect(sheet.cells.get("C5")?.result).toEqual({ kind: "scalar", value: 15 });
+  });
+
+  it("sum over an all-empty range is 0; other aggregates error", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "C1", "=sum(A1:A4)");
+    setCellRaw(sheet, "C2", "=mean(A1:A4)");
+    expect(sheet.cells.get("C1")?.result).toEqual({ kind: "scalar", value: 0 });
+    expect(sheet.cells.get("C2")?.error).toBe("mean(): all cells in range are empty");
+  });
+
+  it("a cell with an error inside a range propagates instead of being skipped", () => {
+    const sheet = sheetWithGaps();
+    setCellRaw(sheet, "A3", "=Z9*2"); // errors: Z9 empty
+    setCellRaw(sheet, "C1", "=sum(A1:A4)");
+    expect(sheet.cells.get("C1")?.error).toBe("A3 has an error");
   });
 });

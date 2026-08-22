@@ -301,6 +301,24 @@ function broadcastScalar(value: number, n: number): Float64Array {
   return arr;
 }
 
+/** Resolve a direct cell reference. Empty, text, and errored cells are errors
+ *  rather than silent zeros — a dangling reference would otherwise quietly
+ *  poison every downstream distribution. Range arguments are more lenient
+ *  (blanks and labels are skipped); see expandArgs. */
+function resolveDirectRef(
+  addr: CellAddress,
+  results: Map<CellAddress, CellResult>,
+  cells: Map<CellAddress, Cell>,
+  label: string = addr,
+): CellResult {
+  const res = results.get(addr);
+  if (res) return res;
+  const cell = cells.get(addr);
+  if (!cell || cell.content.kind === "empty") throw new Error(`Reference to empty cell ${label}`);
+  if (cell.content.kind === "text") throw new Error(`Reference to text cell ${label}`);
+  throw new Error(`${label} has an error`);
+}
+
 /** Evaluate an expression given resolved cell results */
 function evalExpr(
   expr: Expr,
@@ -319,7 +337,7 @@ function evalExpr(
 
     case "cellRef": {
       const addr = toAddress(expr.col, expr.row);
-      return results.get(addr) ?? { kind: "scalar", value: 0 };
+      return resolveDirectRef(addr, results, cells);
     }
 
     case "varRef": {
@@ -329,7 +347,10 @@ function evalExpr(
       }
       const addr = varMap.get(expr.name);
       if (!addr) throw new Error(`Unknown variable: ${expr.name}`);
-      return results.get(addr) ?? { kind: "scalar", value: 0 };
+      const res = results.get(addr);
+      if (res) return res;
+      // Variable-defining cells are never empty or text, so a missing result means an error
+      throw new Error(`Variable "${expr.name}" has an error`);
     }
 
     case "sheetCellRef": {
@@ -337,7 +358,7 @@ function evalExpr(
       const targetIdx = findSheetIndex(ctx.allSheets, expr.sheet);
       if (targetIdx < 0) throw new Error(`Unknown sheet: ${expr.sheet}`);
       const addr = toAddress(expr.col, expr.row);
-      return ctx.allResults[targetIdx].get(addr) ?? { kind: "scalar", value: 0 };
+      return resolveDirectRef(addr, ctx.allResults[targetIdx], ctx.allSheets[targetIdx].cells, `${expr.sheet}.${addr}`);
     }
 
     case "sheetVarRef": {
@@ -347,7 +368,9 @@ function evalExpr(
       const targetVarMap = ctx.allVarMaps[targetIdx];
       const addr = targetVarMap.get(expr.name);
       if (!addr) throw new Error(`Unknown variable "${expr.name}" in sheet "${expr.sheet}"`);
-      return ctx.allResults[targetIdx].get(addr) ?? { kind: "scalar", value: 0 };
+      const res = ctx.allResults[targetIdx].get(addr);
+      if (res) return res;
+      throw new Error(`Variable "${expr.name}" in sheet "${expr.sheet}" has an error`);
     }
 
     case "binOp": {
@@ -774,7 +797,15 @@ function expandArgs(
       for (let r = e.startRow; r <= e.endRow; r++)
         for (let c = e.startCol; c <= e.endCol; c++) {
           const addr = toAddress(c, r);
-          values.push(results.get(addr) ?? { kind: "scalar", value: 0 });
+          const res = results.get(addr);
+          if (res) {
+            values.push(res);
+            continue;
+          }
+          // Ranges skip blanks and labels; a cell with an actual error still propagates
+          const target = cells.get(addr);
+          if (!target || target.content.kind === "empty" || target.content.kind === "text") continue;
+          throw new Error(`${addr} has an error`);
         }
     } else if (e.type === "chainRange") {
       hasRange = true;
@@ -909,7 +940,7 @@ function evalFunc(
         evalCell(subAddr, subCell, freshResults, varMap, n, cells, true, ctx);
       }
     }
-    return freshResults.get(targetAddr) ?? { kind: "scalar", value: 0 };
+    return resolveDirectRef(targetAddr, freshResults, cells);
   }
 
   // Chain(body, initial) — define an iterative process
@@ -987,7 +1018,13 @@ function evalFunc(
     }
 
     const { values, hasRange } = expandArgs(argExprs, results, varMap, n, cells, ctx);
-    if (values.length === 0) throw new Error(`${name}() requires at least 1 argument`);
+    if (values.length === 0) {
+      if (!hasRange) throw new Error(`${name}() requires at least 1 argument`);
+      // Range expanded to nothing (all cells empty or text): sum has a natural
+      // identity; for the rest there is no meaningful answer
+      if (name === "sum") return { kind: "scalar", value: 0 };
+      throw new Error(`${name}(): all cells in range are empty`);
+    }
 
     const isAggregate = hasRange || values.length > 1;
 

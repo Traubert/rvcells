@@ -47,6 +47,8 @@ A cell can optionally define a **named variable** by prefixing the content with 
 ### Evaluation model
 The dependency graph is a DAG evaluated in topological order across all sheets (global topo sort). Each cell resolves to either a scalar or a sample array. Arithmetic on sample arrays is elementwise. Scalars broadcast when mixed with sample arrays. Editing a cell triggers incremental recalculation — only the edited cell and its downstream dependents (including cross-sheet) are re-evaluated. Duplicate variable names are detected and errored (first definition wins).
 
+Reference semantics (deliberately stricter than Excel — silent zeros hide broken models): a direct reference to an empty or text cell is an error, as is referencing a cell that itself has an error. Range arguments (`A1:A10`) skip empty and text cells but propagate errored cells; `sum()` over an all-empty range is 0, other aggregates error.
+
 ### Display
 Each cell shows a compact summary: the value for scalars, mean ± std for distributions with color intensity encoding uncertainty (white = low CV, warm orange → red = high CV). Clicking a distribution cell opens a detail panel with histogram and percentile stats. The detail panel is suppressed for scalar cells. Sensitivity tabs (Correlation, Variance, Tornado) only appear for formulas with 2+ distribution inputs. The Timeline tab only appears for Chain and Markov cells. When switching between cells, the active tab resets if no longer applicable.
 
