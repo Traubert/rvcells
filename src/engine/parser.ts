@@ -449,6 +449,11 @@ class Parser {
     return this.tokens[this.pos];
   }
 
+  /** First unconsumed token, if the parse stopped short of the input's end */
+  remaining(): Token | undefined {
+    return this.tokens[this.pos];
+  }
+
   private advance(): Token {
     return this.tokens[this.pos++];
   }
@@ -806,11 +811,39 @@ class Parser {
   }
 }
 
+/** Human-readable rendering of a token for error messages */
+function describeToken(tok: Token): string {
+  switch (tok.type) {
+    case "number": return String(tok.value);
+    case "percent": return `${tok.value * 100}%`;
+    case "cellRef": return toAddress(tok.col, tok.row);
+    case "ident": return tok.original;
+    case "quotedName": return `'${tok.name}'`;
+    case "op": return tok.value;
+    case "dot": return ".";
+    case "lparen": return "(";
+    case "rparen": return ")";
+    case "comma": return ",";
+    case "arrow": return "->";
+    case "colon": return ":";
+    case "semicolon": return ";";
+    case "assign": return "=";
+    case "lbracket": return "[";
+    case "rbracket": return "]";
+  }
+}
+
 /** Parse an expression string into an AST */
 export function parseExpr(input: string): Expr {
   const tokens = tokenize(input);
   if (tokens.length === 0) throw new Error("Empty expression");
   const parser = new Parser(tokens);
   const expr = parser.parseExpression();
+  // The whole input must be consumed — silently dropping a trailing
+  // "* 2" or ".A1" would compute something other than what was written
+  const leftover = parser.remaining();
+  if (leftover) {
+    throw new Error(`Unexpected "${describeToken(leftover)}" after expression`);
+  }
   return expr;
 }

@@ -904,3 +904,29 @@ describe("parseExpr", () => {
     });
   });
 });
+
+describe("trailing tokens after expression", () => {
+  // Regression: the parser used to stop at the first token it couldn't
+  // continue with and silently drop the rest — "= 5 5" evaluated as 5, and
+  // "= B2.A1 * 2" (sheet named like a cell address) as just "= B2".
+  it("rejects trailing garbage after a complete expression", () => {
+    // parseCell's existing fallback shows unparseable formulas as literal text
+    // (visibly not computed) instead of evaluating a truncated expression
+    expect(parseCell("= 5 5").content.kind).toBe("text");
+    expect(() => parseExpr("5 5")).toThrow('Unexpected "5" after expression');
+    expect(() => parseExpr("(1+2) 7")).toThrow('Unexpected "7" after expression');
+    expect(() => parseExpr("B1 2")).toThrow('Unexpected "2" after expression');
+  });
+
+  it("rejects a dot after a cell reference (sheet named like a cell address)", () => {
+    expect(() => parseExpr("B2.A1 * 2")).toThrow('Unexpected "." after expression');
+  });
+
+  it("still accepts complete expressions ending in every suffix form", () => {
+    expect(() => parseExpr("sum(A1:A4)")).not.toThrow();
+    expect(() => parseExpr("x[5]")).not.toThrow();
+    expect(() => parseExpr("income[0:12]")).not.toThrow();
+    expect(() => parseExpr("'My Sheet'.A1 + 1")).not.toThrow();
+    expect(() => parseExpr("100 ± 10%")).not.toThrow();
+  });
+});

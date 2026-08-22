@@ -162,6 +162,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
   - Storing sorted would double memory. More importantly, sorted order breaks after any elementwise operation, and sample index correspondence across cells is required for correct arithmetic and correlation analysis. Current approach (sort temporary copies) is correct.
 
 - [ ] Does ChainIndex() work with comparing two chains, ie. at what timestep does chain A's median exceed Chain B's median?
+
+- [ ] Should `=`-prefixed input that fails to parse become an error cell instead of falling back to literal text? The `=` prefix unambiguously signals formula intent, so a red parse error (e.g. `Unexpected "5" after expression`) may beat silent text fallback. Trade-off: `name =` and `:=` cells whose right side is prose currently rely on the text fallback, so only the bare-`=` path should change.
 ## Design Principles
 
 - **Immediate feedback**: recalculation should feel instant. 10k samples through a small DAG should take <10ms.
