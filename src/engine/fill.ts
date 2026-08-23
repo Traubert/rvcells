@@ -8,36 +8,36 @@ import { ID_START_SRC, ID_CONT_SRC } from "../constants";
  *
  * Works on the raw text to preserve user formatting.
  */
+/** Split a formula-bearing raw cell text into its prefix ("=", ":=", or
+ *  "name =") and expression part. Null for non-formula text. */
+export function splitFormulaText(raw: string): { prefix: string; expr: string } | null {
+  const trimmed = raw.trim();
+
+  if (trimmed.startsWith(":=")) {
+    const prefix = trimmed.slice(0, trimmed.indexOf(":=") + 2);
+    return { prefix, expr: trimmed.slice(prefix.length) };
+  }
+  if (trimmed.startsWith("=")) {
+    return { prefix: "=", expr: trimmed.slice(1) };
+  }
+  // "name = ..." pattern
+  const varMatch = trimmed.match(new RegExp(`^(${ID_START_SRC}${ID_CONT_SRC}*\\s*:?=\\s*)`, "u"));
+  if (varMatch) {
+    return { prefix: varMatch[1], expr: trimmed.slice(varMatch[1].length) };
+  }
+  return null;
+}
+
 export function shiftCellText(raw: string, dCol: number, dRow: number): string {
   // Match cell references in formulas: optional $ + uppercase letters + optional $ + digits
   // We need to handle this in the formula part of the cell text.
   // The formula part starts after "=" or ":=" or "varname ="
-
-  const trimmed = raw.trim();
-
-  // Find where the expression starts
-  let prefix = "";
-  let expr = trimmed;
-
-  if (trimmed.startsWith(":=")) {
-    prefix = trimmed.slice(0, trimmed.indexOf(":=") + 2);
-    expr = trimmed.slice(prefix.length);
-  } else if (trimmed.startsWith("=")) {
-    prefix = "=";
-    expr = trimmed.slice(1);
-  } else {
-    // Check for "name = ..." pattern
-    const varMatch = trimmed.match(new RegExp(`^(${ID_START_SRC}${ID_CONT_SRC}*\\s*:?=\\s*)`, "u"));
-    if (varMatch) {
-      prefix = varMatch[1];
-      expr = trimmed.slice(prefix.length);
-    } else {
-      // Not a formula — no references to shift (could be a distribution or number)
-      // Still try to shift cell refs in case it's a distribution in a formula context
-      // Actually, plain numbers/distributions/text have no cell refs, so return as-is
-      return raw;
-    }
+  const split = splitFormulaText(raw);
+  if (!split) {
+    // Not a formula — plain numbers/distributions/text have no cell refs
+    return raw;
   }
+  const { prefix, expr } = split;
 
   // Replace cell references in the expression part
   const shifted = expr.replace(

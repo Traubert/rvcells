@@ -1491,3 +1491,160 @@ describe("parse error cells", () => {
     expect(sheet.cells.get("A1")?.result).toEqual({ kind: "scalar", value: 25 });
   });
 });
+
+describe("variable rename propagation", () => {
+  function twoSheets(): [Sheet, Sheet] {
+    const main = createSheet("Main");
+    const other = createSheet("Other");
+    return [main, other];
+  }
+
+  it("renaming a variable rewrites bare and sheet-qualified usage sites", () => {
+    const [main, other] = twoSheets();
+    const sheets = [main, other];
+    setCellRaw(main, "A1", "x = 100", sheets, 0);
+    setCellRaw(main, "B1", "= x * 2", sheets, 0);
+    setCellRaw(other, "C1", "= Main.x + 1", sheets, 1);
+    setCellRaw(other, "C2", "= 'Main'.x + 2", sheets, 1);
+
+    setCellRaw(main, "A1", "y = 100", sheets, 0, DEFAULT_SETTINGS, true);
+
+    expect(main.cells.get("B1")?.raw).toBe("= y * 2");
+    expect(main.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 200 });
+    expect(other.cells.get("C1")?.raw).toBe("= Main.y + 1");
+    expect(other.cells.get("C1")?.result).toEqual({ kind: "scalar", value: 101 });
+    expect(other.cells.get("C2")?.raw).toBe("= 'Main'.y + 2");
+    expect(other.cells.get("C2")?.result).toEqual({ kind: "scalar", value: 102 });
+  });
+
+  it("does not rewrite on a name collision; referencers error instead of staying stale", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "x = 100");
+    setCellRaw(sheet, "A2", "y = 50");
+    setCellRaw(sheet, "B1", "= x * 2");
+    setCellRaw(sheet, "A1", "y = 100", undefined, undefined, DEFAULT_SETTINGS, true);
+    expect(sheet.cells.get("B1")?.raw).toBe("= x * 2"); // untouched
+    expect(sheet.cells.get("B1")?.error).toBe("Unknown variable: x");
+    // Duplicate detection is by cell-map order: A1 now wins "y", A2 is flagged
+    expect(sheet.cells.get("A2")?.error).toMatch(/Duplicate variable/);
+  });
+
+  it("removing a variable name invalidates referencers immediately", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "x = 100");
+    setCellRaw(sheet, "B1", "= x * 2");
+    expect(sheet.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 200 });
+    setCellRaw(sheet, "A1", "= 100"); // name removed (not even renameAware)
+    expect(sheet.cells.get("B1")?.error).toBe("Unknown variable: x");
+  });
+
+  it("deleting a variable-defining cell invalidates referencers immediately", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "x = 100");
+    setCellRaw(sheet, "B1", "= x * 2");
+    setCellRaw(sheet, "A1", "");
+    expect(sheet.cells.get("B1")?.error).toBe("Unknown variable: x");
+  });
+
+  it("cross-sheet referencers are invalidated too", () => {
+    const [main, other] = twoSheets();
+    const sheets = [main, other];
+    setCellRaw(main, "A1", "x = 100", sheets, 0);
+    setCellRaw(other, "C1", "= Main.x + 1", sheets, 1);
+    expect(other.cells.get("C1")?.result).toEqual({ kind: "scalar", value: 101 });
+    setCellRaw(main, "A1", "", sheets, 0);
+    expect(other.cells.get("C1")?.error).toBe('Unknown variable "x" in sheet "Main"');
+  });
+
+  it("renaming a label propagates to formulas using the derived name", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "D1", "Growth rate");
+    setCellRaw(sheet, "E1", ":= 1.05");
+    setCellRaw(sheet, "F1", "= growth_rate * 100");
+    expect(sheet.cells.get("F1")?.result).toEqual({ kind: "scalar", value: 105 });
+    setCellRaw(sheet, "D1", "Expansion rate", undefined, undefined, DEFAULT_SETTINGS, true);
+    expect(sheet.cells.get("F1")?.raw).toBe("= expansion_rate * 100");
+    expect(sheet.cells.get("F1")?.result).toEqual({ kind: "scalar", value: 105 });
+  });
+
+  it("non-interactive edits (paste/fill/move) never rewrite usage sites", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "x = 100");
+    setCellRaw(sheet, "B1", "= x * 2");
+    setCellRaw(sheet, "A1", "y = 100"); // renameAware defaults to false
+    expect(sheet.cells.get("B1")?.raw).toBe("= x * 2");
+    expect(sheet.cells.get("B1")?.error).toBe("Unknown variable: x");
+  });
+
+  it("leaves function calls, longer identifiers, and sheet qualifiers alone", () => {
+    const [main, other] = twoSheets();
+    const sheets = [main, other];
+    // Variable shares its name with a function and prefixes another identifier
+    setCellRaw(main, "A1", "mean = 5", sheets, 0);
+    setCellRaw(main, "A2", "mean2 = 7", sheets, 0);
+    setCellRaw(main, "B1", "= mean + mean2 + mean(C1:C2)", sheets, 0);
+    setCellRaw(main, "C1", "10", sheets, 0);
+    setCellRaw(main, "C2", "20", sheets, 0);
+    // A variable in another sheet that shares the name must not be rewritten
+    setCellRaw(other, "A1", "mean = 1000", sheets, 1);
+    setCellRaw(other, "B1", "= mean * 2", sheets, 1);
+
+    setCellRaw(main, "A1", "avg = 5", sheets, 0, DEFAULT_SETTINGS, true);
+
+    expect(main.cells.get("B1")?.raw).toBe("= avg + mean2 + mean(C1:C2)");
+    expect(main.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 27 });
+    expect(other.cells.get("B1")?.raw).toBe("= mean * 2"); // other sheet's own variable
+    expect(other.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 2000 });
+  });
+
+  it("does not rewrite a same-named sheet qualifier", () => {
+    const main = createSheet("Main");
+    const data = createSheet("data");
+    const sheets = [main, data];
+    setCellRaw(main, "A1", "data = 5", sheets, 0);
+    setCellRaw(data, "Q1", "q = 7", sheets, 1);
+    setCellRaw(main, "B1", "= data + data.q", sheets, 0);
+    expect(main.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 12 });
+    setCellRaw(main, "A1", "info = 5", sheets, 0, DEFAULT_SETTINGS, true);
+    expect(main.cells.get("B1")?.raw).toBe("= info + data.q");
+    expect(main.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 12 });
+  });
+});
+
+describe("sheet rename guards", () => {
+  it("refuses to rename onto an existing sheet name (case-insensitive)", () => {
+    const a = createSheet("Alpha");
+    const b = createSheet("Beta");
+    const sheets = [a, b];
+    setCellRaw(a, "A1", "5", sheets, 0);
+    setCellRaw(b, "B1", "= Alpha.A1 + 1", sheets, 1);
+    expect(renameSheet(sheets, 0, "beta")).toBe(false);
+    expect(a.name).toBe("Alpha");
+    expect(b.cells.get("B1")?.raw).toBe("= Alpha.A1 + 1"); // no rewrites
+    expect(renameSheet(sheets, 0, "  ")).toBe(false);
+    expect(renameSheet(sheets, 0, "Alpha")).toBe(true); // renaming to itself is fine
+  });
+
+  it("quotes new names that would tokenize as cell addresses", () => {
+    const a = createSheet("Alpha");
+    const b = createSheet("Beta");
+    const sheets = [a, b];
+    setCellRaw(a, "A1", "5", sheets, 0);
+    setCellRaw(b, "B1", "= Alpha.A1 + 1", sheets, 1);
+    expect(renameSheet(sheets, 0, "B2")).toBe(true);
+    expect(b.cells.get("B1")?.raw).toBe("= 'B2'.A1 + 1");
+    expect(b.cells.get("B1")?.result).toEqual({ kind: "scalar", value: 6 });
+  });
+
+  it("preserves cell formats when rewriting references", () => {
+    const a = createSheet("Alpha");
+    const b = createSheet("Beta");
+    const sheets = [a, b];
+    setCellRaw(a, "A1", "5", sheets, 0);
+    setCellRaw(b, "B1", "= Alpha.A1 + 1", sheets, 1);
+    setCellFormat(b, "B1", { formatString: "{.2} €", bold: true });
+    expect(renameSheet(sheets, 0, "Gamma")).toBe(true);
+    expect(b.cells.get("B1")?.raw).toBe("= Gamma.A1 + 1");
+    expect(b.cells.get("B1")?.format).toEqual({ formatString: "{.2} €", bold: true });
+  });
+});

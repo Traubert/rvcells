@@ -2,6 +2,7 @@ import type { Cell, CellAddress, CellFormat, CellResult, Expr, MarkovInit, Marko
 import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
+import { splitFormulaText } from "./fill";
 import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, DEFAULT_CHAIN_SEARCH_LIMIT, SAMPLE_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
 import type { InlineSample } from "./types";
 
@@ -131,6 +132,8 @@ function resolveLabelVars(cells: Map<CellAddress, Cell>): void {
   }
 }
 
+const RESERVED_VARS = new Set(["_t"]);
+
 /** Build a map from variable name → cell address.
  *  First definition wins; subsequent duplicates get marked with errors.
  *  Returns the varMap and the set of duplicate cell addresses. */
@@ -146,7 +149,6 @@ function buildVarMap(cells: Map<CellAddress, Cell>): { varMap: Map<string, CellA
   }
   const varMap = new Map<string, CellAddress>();
   const dupAddrs = new Set<CellAddress>();
-  const RESERVED_VARS = new Set(["_t"]);
   for (const [addr, cell] of cells) {
     if (cell.variableName) {
       if (RESERVED_VARS.has(cell.variableName)) {
@@ -1724,6 +1726,100 @@ export function recalculateAllFrom(
   }
 }
 
+// ─── Variable rename propagation ─────────────────────────────────────
+
+/** The variable name a cell defines right now (labelVar cells derive it from
+ *  the text cell to their left, which may not be re-resolved yet). */
+function effectiveVarName(cells: Map<CellAddress, Cell>, addr: CellAddress, cell: Cell): string | undefined {
+  if (cell.labelVar) {
+    const parsed = parseAddress(addr);
+    if (!parsed || parsed.col === 0) return undefined;
+    const leftCell = cells.get(toAddress(parsed.col - 1, parsed.row));
+    return leftCell?.content.kind === "text" ? textToVarName(leftCell.content.value) : undefined;
+  }
+  return cell.variableName;
+}
+
+/** A variable rename may only rewrite usage sites when it's unambiguous:
+ *  the renamed cell was the sole definer of oldName in its sheet, and
+ *  newName isn't reserved or defined by any other cell there. */
+function canPropagateVarRename(sheet: Sheet, definerAddr: CellAddress, oldName: string, newName: string): boolean {
+  if (RESERVED_VARS.has(newName)) return false;
+  for (const [addr, c] of sheet.cells) {
+    if (addr === definerAddr) continue;
+    const vn = effectiveVarName(sheet.cells, addr, c);
+    if (vn === oldName || vn === newName) return false;
+  }
+  return true;
+}
+
+/** Rewrite usage sites of a renamed variable: bare references in formulas on
+ *  the defining sheet, and Sheet.name / 'Sheet Name'.name references anywhere.
+ *  Only call after canPropagateVarRename. Skips the definer cell itself. */
+function renameVariableUsages(
+  allSheets: Sheet[],
+  definingSheetIdx: number,
+  definerAddr: CellAddress,
+  oldName: string,
+  newName: string,
+): void {
+  const sheetName = allSheets[definingSheetIdx].name;
+  // Bare reference: not part of a longer identifier, not preceded by a dot
+  // (someone else's sheet qualifier) or quote, not followed by "(" (function
+  // call) or "." (this ident being a sheet qualifier itself)
+  const bare = new RegExp(
+    `(?<!${ID_CONT_SRC})(?<!\\.\\s{0,20})(?<!')${escapeRegex(oldName)}(?!${ID_CONT_SRC})(?!\\s*[.(])`,
+    "giu",
+  );
+  // Sheet-qualified reference to this sheet's variable, from any sheet
+  const heads: string[] = [];
+  if (!sheetNameNeedsQuotes(sheetName)) heads.push(escapeRegex(sheetName));
+  heads.push(`'${escapeRegex(sheetName)}'`);
+  const qualified = new RegExp(
+    `((?<!${ID_CONT_SRC})(?:${heads.join("|")})\\s*\\.\\s*)${escapeRegex(oldName)}(?!${ID_CONT_SRC})(?!\\s*[.(])`,
+    "giu",
+  );
+
+  for (let sj = 0; sj < allSheets.length; sj++) {
+    for (const [addr, cell] of allSheets[sj].cells) {
+      if (sj === definingSheetIdx && addr === definerAddr) continue;
+      if (cell.content.kind !== "formula") continue;
+      const split = splitFormulaText(cell.raw);
+      if (!split) continue;
+      let expr = split.expr.replace(qualified, `$1${newName}`);
+      if (sj === definingSheetIdx) expr = expr.replace(bare, newName);
+      if (expr !== split.expr) {
+        replaceRaw(allSheets[sj].cells, addr, split.prefix + expr, cell.format);
+      }
+    }
+  }
+}
+
+/** Re-evaluate every formula that references the given variable of the given
+ *  sheet (bare refs there, qualified refs anywhere). Used when a variable is
+ *  renamed or removed: the dependency edge is gone, so the normal dirty
+ *  propagation can't reach these cells and they'd keep stale results. */
+function invalidateVarReferencers(allSheets: Sheet[], definingSheetIdx: number, name: string, settings: WorkbookSettings): void {
+  const bySheet = new Map<number, CellAddress[]>();
+  for (let sj = 0; sj < allSheets.length; sj++) {
+    for (const [addr, c] of allSheets[sj].cells) {
+      if (c.content.kind !== "formula") continue;
+      const { varRefs, sheetRefs } = exprDeps(c.content.expr);
+      const hit =
+        (sj === definingSheetIdx && varRefs.includes(name)) ||
+        sheetRefs.some((r) => "varName" in r && r.varName === name && findSheetIndex(allSheets, r.sheet) === definingSheetIdx);
+      if (hit) {
+        const list = bySheet.get(sj) ?? [];
+        list.push(addr);
+        bySheet.set(sj, list);
+      }
+    }
+  }
+  for (const [sj, addrs] of bySheet) {
+    recalculateAllFrom(allSheets, sj, addrs, settings);
+  }
+}
+
 /** Set a cell's raw value, parse it, and recalculate.
  *  Returns the cell, which will have an error set if the edit would create a cycle. */
 export function setCellRaw(
@@ -1733,33 +1829,40 @@ export function setCellRaw(
   allSheets?: Sheet[],
   sheetIndex?: number,
   settings = DEFAULT_SETTINGS,
+  renameAware = false,
 ): Cell | undefined {
   const sheets = allSheets ?? [sheet];
   const si = sheetIndex ?? 0;
 
   if (raw.trim() === "") {
+    const deleted = sheet.cells.get(addr);
     sheet.cells.delete(addr);
     const dirty = [addr];
+    // Referencers of a deleted variable definition lose their dependency edge,
+    // so they must be invalidated explicitly or they'd keep stale results
+    const staleNames: string[] = [];
+    if (deleted?.variableName) staleNames.push(deleted.variableName);
     const parsed = parseAddress(addr);
     if (parsed) {
       const rightAddr = toAddress(parsed.col + 1, parsed.row);
       const rightCell = sheet.cells.get(rightAddr);
       if (rightCell?.labelVar) {
         dirty.push(rightAddr);
+        if (rightCell.variableName) staleNames.push(rightCell.variableName);
       }
     }
     recalculateAllFrom(sheets, si, dirty, settings);
+    for (const n of staleNames) invalidateVarReferencers(sheets, si, n, settings);
     return undefined;
   }
 
   const { content, variableName, labelVar } = parseCell(raw);
+  const prev = sheet.cells.get(addr);
   // Formatting survives content edits; it dies only with the cell (empty raw above)
-  const prevFormat = sheet.cells.get(addr)?.format;
-  const cell: Cell = { raw, content, variableName, labelVar, format: prevFormat };
+  const cell: Cell = { raw, content, variableName, labelVar, format: prev?.format };
 
   // Check for cycles before committing the edit
   if (content.kind === "formula") {
-    const prev = sheet.cells.get(addr);
     sheet.cells.set(addr, cell);
     const { allVarMaps } = buildAllVarMaps(sheets);
     const deps = globalCellDeps(cell, addr, si, sheets, allVarMaps);
@@ -1780,8 +1883,22 @@ export function setCellRaw(
 
   sheet.cells.set(addr, cell);
 
-  // If this is a text cell, also dirty the cell to the right if it uses labelVar
   const dirty = [addr];
+  const staleNames: string[] = [];
+
+  // Variable rename on the edited cell itself: rewrite usage sites when the
+  // rename is unambiguous (interactive edits only); either way the old name's
+  // referencers must be re-evaluated — their dependency edge is gone
+  const oldName = prev?.variableName;
+  const newName = effectiveVarName(sheet.cells, addr, cell);
+  if (oldName && oldName !== newName) {
+    if (renameAware && newName && canPropagateVarRename(sheet, addr, oldName, newName)) {
+      renameVariableUsages(sheets, si, addr, oldName, newName);
+    }
+    staleNames.push(oldName);
+  }
+
+  // If this is a text cell, it may be the label naming a := cell to the right
   if (content.kind === "text" || content.kind === "empty") {
     const parsed = parseAddress(addr);
     if (parsed) {
@@ -1790,22 +1907,19 @@ export function setCellRaw(
       if (rightCell?.labelVar) {
         const oldVarName = rightCell.variableName;
         dirty.push(rightAddr);
-        if (oldVarName) {
-          // Dirty cells in this sheet that referenced the old variable name
-          for (const [depAddr, depCell] of sheet.cells) {
-            if (depCell.content.kind === "formula") {
-              const { varRefs } = exprDeps(depCell.content.expr);
-              if (varRefs.includes(oldVarName)) {
-                dirty.push(depAddr);
-              }
-            }
+        const newVarName = content.kind === "text" ? textToVarName(content.value) : undefined;
+        if (oldVarName && oldVarName !== newVarName) {
+          if (renameAware && newVarName && canPropagateVarRename(sheet, rightAddr, oldVarName, newVarName)) {
+            renameVariableUsages(sheets, si, rightAddr, oldVarName, newVarName);
           }
+          staleNames.push(oldVarName);
         }
       }
     }
   }
 
   recalculateAllFrom(sheets, si, dirty, settings);
+  for (const n of staleNames) invalidateVarReferencers(sheets, si, n, settings);
   return cell;
 }
 
@@ -1918,33 +2032,53 @@ export function findRefsToSheet(
  * Rename a sheet and update all cross-sheet references in all sheets.
  * Modifies raw cell strings and re-parses affected cells.
  */
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A sheet name must be quoted in references when it contains non-identifier
+ *  characters, starts with a digit, or would tokenize as a cell address. */
+function sheetNameNeedsQuotes(name: string): boolean {
+  return /[^\p{L}\p{N}_]/u.test(name) || /^\p{N}/u.test(name) || parseAddress(name) !== null;
+}
+
+/** Re-parse a cell after its raw text was rewritten, keeping its format. */
+function replaceRaw(cells: Map<CellAddress, Cell>, addr: CellAddress, raw: string, format: Cell["format"]): void {
+  const { content, variableName, labelVar } = parseCell(raw);
+  cells.set(addr, { raw, content, variableName, labelVar, format });
+}
+
+/** Rename a sheet and rewrite all cross-sheet references to it.
+ *  Refuses (returns false, changing nothing) when the new name is empty or
+ *  collides with another sheet — usage sites are only rewritten when the
+ *  rename is known to be valid. */
 export function renameSheet(
   allSheets: Sheet[],
   sheetIndex: number,
   newName: string,
-): void {
+  settings = DEFAULT_SETTINGS,
+): boolean {
   const oldName = allSheets[sheetIndex].name;
-  allSheets[sheetIndex].name = newName;
+  const trimmed = newName.trim();
+  if (!trimmed) return false;
+  const existing = findSheetIndex(allSheets, trimmed);
+  if (existing >= 0 && existing !== sheetIndex) return false; // name collision
+  allSheets[sheetIndex].name = trimmed;
 
   // Build regex patterns for old name references in raw cell text
   // Handle both unquoted (OldName.ref) and quoted ('Old Name'.ref) forms
-  const needsQuotes = (name: string) => /[^\p{L}\p{N}_]/u.test(name);
-  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  // Build replacement patterns
+  const replacement = sheetNameNeedsQuotes(trimmed) ? `'${trimmed}'.` : `${trimmed}.`;
   const patterns: { regex: RegExp; replacement: string }[] = [];
 
   // Unquoted old name
-  if (!needsQuotes(oldName)) {
+  if (!sheetNameNeedsQuotes(oldName)) {
     patterns.push({
       regex: new RegExp(`(?<!${ID_CONT_SRC}|')${escapeRegex(oldName)}\\.`, "giu"),
-      replacement: needsQuotes(newName) ? `'${newName}'.` : `${newName}.`,
+      replacement,
     });
   }
   // Quoted old name
   patterns.push({
     regex: new RegExp(`'${escapeRegex(oldName)}'\\s*\\.`, "gi"),
-    replacement: needsQuotes(newName) ? `'${newName}'.` : `${newName}.`,
+    replacement,
   });
 
   // Update all cells in all sheets
@@ -1960,14 +2094,14 @@ export function renameSheet(
         }
       }
       if (changed) {
-        const { content, variableName, labelVar } = parseCell(raw);
-        sheet.cells.set(addr, { raw, content, variableName, labelVar });
+        replaceRaw(sheet.cells, addr, raw, cell.format);
       }
     }
   }
 
   // Recalculate everything
-  recalculateAllBulk(allSheets);
+  recalculateAllBulk(allSheets, settings);
+  return true;
 }
 
 /** Compute summary stats from a CellResult */

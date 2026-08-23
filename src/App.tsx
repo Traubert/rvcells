@@ -484,8 +484,9 @@ export default function App() {
   }, [setActiveIdx]);
 
   const handleTabRename = useCallback((index: number, name: string) => {
-    renameSheet(sheetsRef.current, index, name);
-    commitChange();
+    if (renameSheet(sheetsRef.current, index, name, settingsRef.current)) {
+      commitChange();
+    }
   }, [commitChange]);
 
   const doDeleteSheet = useCallback((index: number) => {

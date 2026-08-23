@@ -28,7 +28,7 @@ export function TabBar({ sheets, activeIndex, onSelect, onRename, onClose, onAdd
     if (editingIndex !== null) {
       const trimmed = editValue.trim();
       if (trimmed && trimmed !== sheets[editingIndex].name) {
-        const duplicate = sheets.some((s, i) => i !== editingIndex && s.name === trimmed);
+        const duplicate = sheets.some((s, i) => i !== editingIndex && s.name.toLowerCase() === trimmed.toLowerCase());
         if (duplicate) {
           // Don't rename — revert to original
         } else {

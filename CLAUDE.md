@@ -84,7 +84,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Tabbed sheets with add/close/rename, duplicate name prevention
 - [x] Cross-sheet cell references (`Data.A1`) and variable references (`Data.income`)
 - [x] Quoted sheet names for spaces (`'My Sheet'.A1`)
-- [x] Sheet rename propagates to all cross-sheet references
+- [x] Sheet rename propagates to all cross-sheet references (refused on name collision; quotes new names that need it, incl. cell-address-like names)
+- [x] Variable rename propagates to usage sites (typing edits only, incl. `:=` label renames; bare refs on the defining sheet + `Sheet.var` refs everywhere). Skipped when ambiguous — name collision, duplicate old name, or reserved — and skipped for paste/fill/move. Renames that don't propagate (and variable removals/deletions) invalidate referencers immediately so they error instead of keeping stale results
 - [x] Sheet delete warns if referenced, with in-app confirmation dialog
 - [x] Bernoulli(p) and Discrete(p1, ..., pN) distributions
 - [x] resample(cell): re-evaluate sub-DAG with fresh random draws

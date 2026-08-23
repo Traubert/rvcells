@@ -254,7 +254,7 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
         const value = editingInBar
           ? barInputRef.current?.value ?? editValue
           : inputRef.current?.value ?? editValue;
-        setCellRaw(sheet, editingAddr, value, allSheets, sheetIndex, settings);
+        setCellRaw(sheet, editingAddr, value, allSheets, sheetIndex, settings, true);
         stopEditing();
         onSheetChange();
       }
@@ -365,7 +365,7 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
 
   const commitEdit = useCallback(
     (addr: CellAddress, value: string) => {
-      setCellRaw(sheet, addr, value, allSheets, sheetIndex, settings);
+      setCellRaw(sheet, addr, value, allSheets, sheetIndex, settings, true);
       stopEditing();
       onSheetChange();
     },
