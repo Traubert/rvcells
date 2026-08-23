@@ -40,6 +40,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 29, summary: "Cell formatting via the Format menu: significant figures, percentage, currency, bold, and custom format strings ({} plain, {%} percent, {.2} fixed decimals)" },
   { version: 30, summary: "= and := input that fails to parse now shows a red error on the cell (e.g. a stray closing paren) instead of silently turning into text" },
   { version: 31, summary: "Renaming a variable (or the label naming a := cell) rewrites its usage sites in all formulas, like sheet renames already did — skipped if the new name collides; dependents of a removed variable now error immediately" },
+  { version: 32, summary: "Closing a non-empty sheet now asks for confirmation" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

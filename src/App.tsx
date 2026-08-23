@@ -502,7 +502,8 @@ export default function App() {
   const handleTabClose = useCallback((index: number) => {
     if (sheetsRef.current.length <= 1) return;
 
-    const sheetName = sheetsRef.current[index].name;
+    const sheet = sheetsRef.current[index];
+    const sheetName = sheet.name;
     const refs = findRefsToSheet(sheetsRef.current, sheetName);
     const externalRefs = refs.filter((r) => r.sheetIndex !== index);
 
@@ -513,7 +514,13 @@ export default function App() {
       const cellWord = n === 1 ? "1 cell" : `${n} cells`;
       const msg = `Sheet "${sheetName}" is referenced by ${cellWord} in other sheets (first reference: ${refSheet}.${first.addr}). Delete anyway?`;
       setConfirmDelete({ index, message: msg });
+    } else if (sheet.cells.size > 0) {
+      const n = sheet.cells.size;
+      const cellWord = n === 1 ? "1 cell" : `${n} cells`;
+      const msg = `Delete sheet "${sheetName}"? It contains ${cellWord}. (Ctrl+Z undoes this.)`;
+      setConfirmDelete({ index, message: msg });
     } else {
+      // Empty sheet — nothing to lose, delete without ceremony
       doDeleteSheet(index);
     }
   }, [doDeleteSheet]);
