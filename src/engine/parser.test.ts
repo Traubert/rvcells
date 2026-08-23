@@ -221,8 +221,8 @@ describe("parseCell", () => {
       });
     });
 
-    it("falls back to text on bad formula", () => {
-      expect(parseCell("= +").content.kind).toBe("text");
+    it("flags a parse error on bad formula", () => {
+      expect(parseCell("= +").content.kind).toBe("parseError");
     });
 
     it("parses % suffix as a percent literal in expressions", () => {
@@ -910,12 +910,25 @@ describe("trailing tokens after expression", () => {
   // continue with and silently drop the rest — "= 5 5" evaluated as 5, and
   // "= B2.A1 * 2" (sheet named like a cell address) as just "= B2".
   it("rejects trailing garbage after a complete expression", () => {
-    // parseCell's existing fallback shows unparseable formulas as literal text
-    // (visibly not computed) instead of evaluating a truncated expression
-    expect(parseCell("= 5 5").content.kind).toBe("text");
+    expect(parseCell("= 5 5").content).toEqual({ kind: "parseError", message: 'Unexpected "5" after expression' });
     expect(() => parseExpr("5 5")).toThrow('Unexpected "5" after expression');
     expect(() => parseExpr("(1+2) 7")).toThrow('Unexpected "7" after expression');
     expect(() => parseExpr("B1 2")).toThrow('Unexpected "2" after expression');
+  });
+
+  it("= and := parse failures become error cells; name = prose stays text", () => {
+    // The stray-paren case that motivated this: a := cell with one ) too many
+    expect(parseCell(":=3300+if(Bernoulli(.5), 2300/12, 0))").content).toEqual({
+      kind: "parseError",
+      message: 'Unexpected ")" after expression',
+    });
+    // Valid assignments are untouched
+    expect(parseCell("val = 1+1").content.kind).toBe("formula");
+    expect(parseCell("val = 1+1").variableName).toBe("val");
+    expect(parseCell(":= Normal(1, 2)").content.kind).toBe("distribution");
+    expect(parseCell(":= Normal(1, 2)").labelVar).toBe(true);
+    // "name = prose" is a legitimate text note — keeps the text fallback
+    expect(parseCell("profit = revenue minus costs").content.kind).toBe("text");
   });
 
   it("rejects a dot after a cell reference (sheet named like a cell address)", () => {

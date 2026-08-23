@@ -38,6 +38,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 27, summary: "Mouse multi-cell selection: drag to select, shift+click to extend, drag a selection to move it" },
   { version: 28, summary: "Stricter reference semantics: direct references to empty or text cells now error instead of silently becoming 0; range functions (sum, mean, …) skip empty and text cells" },
   { version: 29, summary: "Cell formatting via the Format menu: significant figures, percentage, currency, bold, and custom format strings ({} plain, {%} percent, {.2} fixed decimals)" },
+  { version: 30, summary: "= and := input that fails to parse now shows a red error on the cell (e.g. a stray closing paren) instead of silently turning into text" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

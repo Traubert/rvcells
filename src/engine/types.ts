@@ -48,7 +48,10 @@ export type CellContent =
   | { kind: "text"; value: string }
   | { kind: "number"; value: number }
   | { kind: "distribution"; dist: Distribution }
-  | { kind: "formula"; expr: Expr };
+  | { kind: "formula"; expr: Expr }
+  // "=" or ":=" input that failed to parse — formula intent was unambiguous,
+  // so surface the parse error instead of falling back to text
+  | { kind: "parseError"; message: string };
 
 /** Captured inline distribution samples for sensitivity analysis */
 export interface InlineSample {

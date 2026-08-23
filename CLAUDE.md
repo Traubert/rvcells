@@ -163,7 +163,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 
 - [ ] Does ChainIndex() work with comparing two chains, ie. at what timestep does chain A's median exceed Chain B's median?
 
-- [ ] Should `=`-prefixed input that fails to parse become an error cell instead of falling back to literal text? The `=` prefix unambiguously signals formula intent, so a red parse error (e.g. `Unexpected "5" after expression`) may beat silent text fallback. Trade-off: `name =` and `:=` cells whose right side is prose currently rely on the text fallback, so only the bare-`=` path should change.
+- [x] Should `=`-prefixed input that fails to parse become an error cell instead of falling back to literal text?
+  - Resolved: yes, for `=` and `:=` (both unambiguously signal formula intent) — they produce a `parseError` content kind whose message surfaces as a red cell error and propagates to dependents. `name = ...` keeps the text fallback because prose like "profit = revenue minus costs" legitimately matches that shape.
 ## Design Principles
 
 - **Immediate feedback**: recalculation should feel instant. 10k samples through a small DAG should take <10ms.

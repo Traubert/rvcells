@@ -1369,6 +1369,8 @@ function evalCell(
       case "text":
         result = undefined;
         break;
+      case "parseError":
+        throw new Error(cell.content.message);
       case "number":
         result = { kind: "scalar", value: cell.content.value };
         break;

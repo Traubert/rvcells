@@ -1466,3 +1466,28 @@ describe("cell formatting", () => {
     expect(sheet.cells.get("A1")?.format).toBeUndefined();
   });
 });
+
+describe("parse error cells", () => {
+  it("surfaces the parse error on the cell after evaluation", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "= 5 5");
+    expect(sheet.cells.get("A1")?.error).toBe('Unexpected "5" after expression');
+    expect(sheet.cells.get("A1")?.result).toBeUndefined();
+  });
+
+  it("propagates to dependents as a normal cell error", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", ":= 1+1)");
+    setCellRaw(sheet, "B1", "=A1*2");
+    expect(sheet.cells.get("B1")?.error).toBe("A1 has an error");
+  });
+
+  it("clears when the formula is fixed", () => {
+    const sheet = createSheet();
+    setCellRaw(sheet, "A1", "= 5 5");
+    expect(sheet.cells.get("A1")?.error).toBeTruthy();
+    setCellRaw(sheet, "A1", "= 5 * 5");
+    expect(sheet.cells.get("A1")?.error).toBeUndefined();
+    expect(sheet.cells.get("A1")?.result).toEqual({ kind: "scalar", value: 25 });
+  });
+});

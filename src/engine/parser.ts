@@ -34,10 +34,11 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
 
     // The RHS could be a number, distribution, or formula expression
     const rhsParsed = parseRHS(rhs);
-    if (rhsParsed) {
-      return { content: rhsParsed, variableName: varName };
+    if ("content" in rhsParsed) {
+      return { content: rhsParsed.content, variableName: varName };
     }
-    // If RHS didn't parse as formula/dist/number, treat whole thing as text
+    // "name = prose" is a legitimate text note ("profit = revenue minus
+    // costs"), so a failed RHS falls back to text rather than erroring
     return { content: { kind: "text", value: trimmed } };
   }
 
@@ -45,10 +46,10 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
   if (trimmed.startsWith(":=")) {
     const exprStr = trimmed.slice(2).trim();
     const rhsParsed = parseRHS(exprStr);
-    if (rhsParsed) {
-      return { content: rhsParsed, labelVar: true };
+    if ("content" in rhsParsed) {
+      return { content: rhsParsed.content, labelVar: true };
     }
-    return { content: { kind: "text", value: trimmed } };
+    return { content: { kind: "parseError", message: rhsParsed.error } };
   }
 
   // Formula: starts with "="
@@ -57,8 +58,8 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
     try {
       const expr = parseExpr(exprStr);
       return { content: { kind: "formula", expr } };
-    } catch {
-      return { content: { kind: "text", value: trimmed } };
+    } catch (e) {
+      return { content: { kind: "parseError", message: (e as Error).message } };
     }
   }
 
@@ -101,19 +102,20 @@ function parseSpreadShorthand(s: string): Distribution | null {
   return { type: "Normal", mean, std: spread };
 }
 
-/** Parse the RHS of a variable assignment — could be number, distribution, or expression */
-function parseRHS(rhs: string): CellContent | null {
+/** Parse the RHS of a variable assignment — could be number, distribution, or
+ *  expression. On failure, returns the expression parse error message. */
+function parseRHS(rhs: string): { content: CellContent } | { error: string } {
   // Number?
   const num = Number(rhs);
   if (!isNaN(num) && rhs !== "") {
-    return { kind: "number", value: num };
+    return { content: { kind: "number", value: num } };
   }
 
   // Distribution?
   try {
     const dist = parseDistribution(rhs);
     if (dist) {
-      return { kind: "distribution", dist };
+      return { content: { kind: "distribution", dist } };
     }
   } catch {
     // fall through to expression parsing
@@ -122,15 +124,15 @@ function parseRHS(rhs: string): CellContent | null {
   // ± shorthand?
   const spreadDist = parseSpreadShorthand(rhs);
   if (spreadDist) {
-    return { kind: "distribution", dist: spreadDist };
+    return { content: { kind: "distribution", dist: spreadDist } };
   }
 
   // Expression?
   try {
     const expr = parseExpr(rhs);
-    return { kind: "formula", expr };
-  } catch {
-    return null;
+    return { content: { kind: "formula", expr } };
+  } catch (e) {
+    return { error: (e as Error).message };
   }
 }
 
