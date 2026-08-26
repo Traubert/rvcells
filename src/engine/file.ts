@@ -1,9 +1,17 @@
 import type { Sheet, CellAddress, CellFormat, WorkbookSettings } from "./types";
+import { parseAddress } from "./types";
 import { parseCell } from "./parser";
 import { recalculateAllBulk, createSheet } from "./evaluate";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_CHAIN_SEARCH_LIMIT } from "../constants";
 
 export const CURRENT_FILE_VERSION = 3;
+
+/** View state saved with the file: where the user was looking. Sparse like
+ *  settings — defaults (first sheet, no selection) are not written. */
+export interface ViewState {
+  activeSheet: number;
+  activeCell: CellAddress | null;
+}
 
 /** On-disk format — settings are sparse: only non-default values are stored */
 export interface FileFormat {
@@ -13,6 +21,8 @@ export interface FileFormat {
     numSamples?: number;
     chainSearchLimit?: number;
   };
+  activeSheet?: number; // active tab index; absent = first sheet
+  activeCell?: string; // selected cell on the active sheet; absent = none
   sheets: Array<{
     name: string;
     cells: Record<string, string>; // addr → raw text
@@ -43,7 +53,7 @@ export function migrateFile(file: FileFormat): FileFormat {
 
 /** Serialize multiple sheets to a saveable JSON object.
  *  Settings are sparse — only non-default values are written. */
-export function serializeFile(sheets: Sheet[], name: string, settings: WorkbookSettings): FileFormat {
+export function serializeFile(sheets: Sheet[], name: string, settings: WorkbookSettings, view?: ViewState): FileFormat {
   const sparse: FileFormat["settings"] = {};
   if (settings.numSamples !== DEFAULT_NUM_SAMPLES) sparse.numSamples = settings.numSamples;
   if (settings.chainSearchLimit !== DEFAULT_CHAIN_SEARCH_LIMIT) sparse.chainSearchLimit = settings.chainSearchLimit;
@@ -51,6 +61,8 @@ export function serializeFile(sheets: Sheet[], name: string, settings: WorkbookS
     version: CURRENT_FILE_VERSION,
     name,
     ...(Object.keys(sparse).length > 0 ? { settings: sparse } : {}),
+    ...(view && view.activeSheet > 0 && view.activeSheet < sheets.length ? { activeSheet: view.activeSheet } : {}),
+    ...(view?.activeCell ? { activeCell: view.activeCell } : {}),
     sheets: sheets.map((sheet) => {
       const cells: Record<string, string> = {};
       const formats: Record<string, CellFormat> = {};
@@ -67,18 +79,27 @@ export function serializeFile(sheets: Sheet[], name: string, settings: WorkbookS
   };
 }
 
-/** Deserialize a file into a name, array of sheets, and settings.
+/** Deserialize a file into a name, array of sheets, settings, and view state.
  *  Accepts any supported older version (migrated up transparently). */
-export function deserializeFile(input: FileFormat): { name: string; sheets: Sheet[]; settings: WorkbookSettings } {
+export function deserializeFile(input: FileFormat): { name: string; sheets: Sheet[]; settings: WorkbookSettings; view: ViewState } {
   const file = migrateFile(input);
   const settings: WorkbookSettings = {
     numSamples: file.settings?.numSamples ?? DEFAULT_NUM_SAMPLES,
     chainSearchLimit: file.settings?.chainSearchLimit ?? DEFAULT_CHAIN_SEARCH_LIMIT,
   };
   const fileName = file.name || DEFAULT_WORKBOOK_NAME;
+  // View state is best-effort: an out-of-range tab or malformed address falls back to the default
+  const numSheets = file.sheets?.length || 1;
+  const view: ViewState = {
+    activeSheet:
+      typeof file.activeSheet === "number" && Number.isInteger(file.activeSheet) && file.activeSheet > 0 && file.activeSheet < numSheets
+        ? file.activeSheet
+        : 0,
+    activeCell: typeof file.activeCell === "string" && parseAddress(file.activeCell) ? (file.activeCell as CellAddress) : null,
+  };
 
   if (!file.sheets?.length) {
-    return { name: fileName, sheets: [createSheet()], settings };
+    return { name: fileName, sheets: [createSheet()], settings, view };
   }
 
   // Deduplicate sheet names: first occurrence keeps its name, duplicates get renamed
@@ -107,12 +128,12 @@ export function deserializeFile(input: FileFormat): { name: string; sheets: Shee
   // Bulk recalculate all sheets together for cross-sheet references
   recalculateAllBulk(sheets, settings);
 
-  return { name: fileName, sheets, settings };
+  return { name: fileName, sheets, settings, view };
 }
 
 /** Save sheets as a JSON file download */
-export function saveToFile(sheets: Sheet[], name: string, settings: WorkbookSettings): void {
-  const data = serializeFile(sheets, name, settings);
+export function saveToFile(sheets: Sheet[], name: string, settings: WorkbookSettings, view?: ViewState): void {
+  const data = serializeFile(sheets, name, settings, view);
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -125,7 +146,7 @@ export function saveToFile(sheets: Sheet[], name: string, settings: WorkbookSett
 
 /** Open a file picker and load sheets. Returns null if user cancels.
  *  On parse failure, returns { error } with a user-facing message. */
-export function openFromFile(): Promise<{ name: string; sheets: Sheet[]; settings: WorkbookSettings } | { error: string } | null> {
+export function openFromFile(): Promise<{ name: string; sheets: Sheet[]; settings: WorkbookSettings; view: ViewState } | { error: string } | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";

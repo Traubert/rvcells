@@ -17,7 +17,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
 - `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex search, Markov compilation and evaluation, summary stats, histograms, sheet rename/delete helpers
 - `src/engine/storage.ts` — localStorage persistence, zip mass export/import
-- `src/engine/file.ts` — JSON file format v3 (multi-sheet, cell formats), migration ladder for older versions, import/export
+- `src/engine/file.ts` — JSON file format v3 (multi-sheet, cell formats, sparse view state), migration ladder for older versions, import/export
 - `src/constants.ts` — shared string, numeric, and distribution name constants
 - `src/engine/fill.ts` — range fill logic with $ pin support
 - `src/format.ts` — shared number formatting (3 significant figures)
@@ -132,6 +132,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [ ] Resizable grid
 - [x] Copy/cut/paste (Ctrl+C/X/V) with reference shifting and system clipboard (TSV)
 - [x] Copy/cut resolved values (Ctrl+Shift+C/X) — scalars as numbers, distributions as mean ± std
+- [x] Active tab and selected cell persist in the save file — optional sparse `activeSheet`/`activeCell` fields in v3 (no version bump: old files default to first sheet / no selection, new files still open in older builds); captured at save time, restored on open/import; invalid values fall back to defaults
 
 ### P3 — advanced
 - [ ] Correlated inputs via Iman-Conover method: user specifies a rank-correlation matrix between distribution cells; Cholesky decomposition permutes existing sample arrays to induce the target correlation while preserving marginals exactly. Works with any distribution since it operates on ranks, not parametric CDFs. Limitation: rank correlation captures monotonic dependencies only (no tail dependence).

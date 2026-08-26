@@ -55,3 +55,42 @@ describe("file format v3: cell formats", () => {
     expect(() => migrateFile({ foo: "bar" } as unknown as FileFormat)).toThrow(/not a valid/);
   });
 });
+
+describe("view state: active sheet and cell", () => {
+  it("round-trips the active sheet and cell", () => {
+    const sheets = [createSheet("One"), createSheet("Two")];
+    const data = serializeFile(sheets, "test", SETTINGS, { activeSheet: 1, activeCell: "C7" });
+    expect(data.activeSheet).toBe(1);
+    expect(data.activeCell).toBe("C7");
+
+    const { view } = deserializeFile(data);
+    expect(view).toEqual({ activeSheet: 1, activeCell: "C7" });
+  });
+
+  it("omits default view state (first sheet, no selection)", () => {
+    const data = serializeFile([createSheet()], "test", SETTINGS, { activeSheet: 0, activeCell: null });
+    expect("activeSheet" in data).toBe(false);
+    expect("activeCell" in data).toBe(false);
+  });
+
+  it("defaults view state for files without it", () => {
+    const { view } = deserializeFile(serializeFile([createSheet()], "test", SETTINGS));
+    expect(view).toEqual({ activeSheet: 0, activeCell: null });
+  });
+
+  it("falls back to defaults on invalid view state", () => {
+    const data: FileFormat = {
+      version: CURRENT_FILE_VERSION,
+      sheets: [{ name: "Only", cells: {} }],
+      activeSheet: 5, // out of range
+      activeCell: "not-an-address",
+    };
+    const { view } = deserializeFile(data);
+    expect(view).toEqual({ activeSheet: 0, activeCell: null });
+  });
+
+  it("does not write an out-of-range active sheet", () => {
+    const data = serializeFile([createSheet()], "test", SETTINGS, { activeSheet: 3, activeCell: null });
+    expect("activeSheet" in data).toBe(false);
+  });
+});

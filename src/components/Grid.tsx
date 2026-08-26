@@ -21,9 +21,13 @@ export type FormatAction =
   | { kind: "clear" };
 
 /** Imperative handle the Format menu (in App) uses to reach the grid selection */
-export interface GridFormatApi {
+export interface GridApi {
   applyFormat: (action: FormatAction) => void;
   activeFormatString: () => string;
+  /** Current active cell, for saving view state with the workbook */
+  getSelection: () => CellAddress | null;
+  /** Restore the active cell (e.g. from a loaded file); null clears it */
+  setSelection: (addr: CellAddress | null) => void;
 }
 
 /** Overwrite a cell's format with a copy of the source's (paste/fill/move) */
@@ -98,10 +102,10 @@ interface GridProps {
   onShowHelp?: () => void;
   onSave?: () => void;
   onOpen?: () => void;
-  formatApi?: React.MutableRefObject<GridFormatApi | null>;
+  gridApi?: React.MutableRefObject<GridApi | null>;
 }
 
-export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, onShowHelp, onSave, onOpen, formatApi }: GridProps) {
+export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, onShowHelp, onSave, onOpen, gridApi }: GridProps) {
   const [selectedAddr, setSelectedAddr] = useState<CellAddress | null>(null);
   // For multi-select: anchor is where shift-selection started, selectedAddr is the other corner
   const [selAnchor, setSelAnchor] = useState<CellAddress | null>(null);
@@ -450,10 +454,10 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
     return `${p.prefix}${p.mean} ± ${p.std}${p.suffix}`;
   }
 
-  // Register the Format-menu API (App owns the menu, the grid owns the selection)
+  // Register the grid API (App owns the menu and save/load, the grid owns the selection)
   useEffect(() => {
-    if (!formatApi) return;
-    formatApi.current = {
+    if (!gridApi) return;
+    gridApi.current = {
       applyFormat: (action: FormatAction) => {
         const range = getSelectionRange();
         if (!range) return;
@@ -484,11 +488,18 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
       },
       activeFormatString: () =>
         (selectedAddr ? sheet.cells.get(selectedAddr)?.format?.formatString : undefined) ?? "",
+      getSelection: () => selectedAddr,
+      setSelection: (addr: CellAddress | null) => {
+        stopEditing();
+        setSelAnchor(null);
+        const parsed = addr ? parseAddress(addr) : null;
+        setSelectedAddr(parsed && parsed.col < NUM_COLS && parsed.row < NUM_ROWS ? addr : null);
+      },
     };
     return () => {
-      formatApi.current = null;
+      gridApi.current = null;
     };
-  }, [formatApi, getSelectionRange, selectedAddr, sheet, onSheetChange]);
+  }, [gridApi, getSelectionRange, selectedAddr, sheet, onSheetChange]);
 
   /** Copy/cut selected cells */
   const copySelection = useCallback((cut: boolean, resolved: boolean) => {

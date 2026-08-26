@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Grid } from "./components/Grid";
-import type { GridFormatApi, FormatAction } from "./components/Grid";
+import type { GridApi, FormatAction } from "./components/Grid";
 import { TabBar } from "./components/TabBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { OpenDialog } from "./components/OpenDialog";
@@ -15,7 +15,7 @@ import { HelpDialog } from "./components/HelpDialog";
 import { AboutDialog } from "./components/AboutDialog";
 import { SplashScreen } from "./components/SplashScreen";
 import type { Sheet } from "./engine/types";
-import type { FileFormat } from "./engine/file";
+import type { FileFormat, ViewState } from "./engine/file";
 import { changelog, CURRENT_VERSION, getLastSeenVersion, setLastSeenVersion } from "./changelog";
 import type { ChangelogEntry } from "./changelog";
 import { DEFAULT_WORKBOOK_NAME, DEFAULT_SHEET_NAME } from "./constants";
@@ -89,7 +89,7 @@ export default function App() {
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
   const [sigFigsOpen, setSigFigsOpen] = useState(false);
   const [formatStringDialog, setFormatStringDialog] = useState<{ initial: string } | null>(null);
-  const gridFormatApiRef = useRef<GridFormatApi | null>(null);
+  const gridApiRef = useRef<GridApi | null>(null);
 
   const closeFormatMenu = useCallback(() => {
     setFormatMenuOpen(false);
@@ -97,7 +97,7 @@ export default function App() {
   }, []);
 
   const applyFormat = useCallback((action: FormatAction) => {
-    gridFormatApiRef.current?.applyFormat(action);
+    gridApiRef.current?.applyFormat(action);
     closeFormatMenu();
   }, [closeFormatMenu]);
 
@@ -152,6 +152,13 @@ export default function App() {
 
   // These plain functions only access stable refs, so they work correctly
   // even when captured in useCallback closures.
+  function currentView(): ViewState {
+    return {
+      activeSheet: activeIndexRef.current,
+      activeCell: gridApiRef.current?.getSelection() ?? null,
+    };
+  }
+
   function takeSnapshot(): Snapshot {
     return {
       name: nameRef.current,
@@ -213,7 +220,7 @@ export default function App() {
     pushSnapshot();
     // Autosave: silently persist if the workbook has a storage entry
     if (autosaveRef.current && workbookIdRef.current) {
-      const data = serializeFile(sheetsRef.current, nameRef.current, settingsRef.current);
+      const data = serializeFile(sheetsRef.current, nameRef.current, settingsRef.current, currentView());
       saveWorkbook(workbookIdRef.current, nameRef.current, data);
     }
     bump();
@@ -273,6 +280,7 @@ export default function App() {
     nameRef.current = name;
     workbookIdRef.current = null;
     setActiveIdx(0);
+    gridApiRef.current?.setSelection(null);
     resetHistory();
     bump();
   }, [bump, setActiveIdx]);
@@ -288,7 +296,7 @@ export default function App() {
     if (!workbookIdRef.current) {
       workbookIdRef.current = generateId();
     }
-    const data = serializeFile(sheetsRef.current, nameRef.current, settingsRef.current);
+    const data = serializeFile(sheetsRef.current, nameRef.current, settingsRef.current, currentView());
     const result = saveWorkbook(workbookIdRef.current, nameRef.current, data);
     if (!result.ok) {
       setStorageWarning(result.reason!);
@@ -330,7 +338,8 @@ export default function App() {
     settingsRef.current = result.settings;
     nameRef.current = result.name;
     workbookIdRef.current = id;
-    setActiveIdx(0);
+    setActiveIdx(result.view.activeSheet);
+    gridApiRef.current?.setSelection(result.view.activeCell);
     resetHistory();
     setOpenDialogOpen(false);
     bump();
@@ -338,7 +347,7 @@ export default function App() {
 
   // File export (download)
   const handleExport = useCallback(() => {
-    saveToFile(sheetsRef.current, nameRef.current, settingsRef.current);
+    saveToFile(sheetsRef.current, nameRef.current, settingsRef.current, currentView());
     setMenuOpen(false);
   }, []);
 
@@ -359,7 +368,8 @@ export default function App() {
     }
     nameRef.current = uniqueName;
     workbookIdRef.current = null; // imported file has no storage id yet
-    setActiveIdx(0);
+    setActiveIdx(result.view.activeSheet);
+    gridApiRef.current?.setSelection(result.view.activeCell);
     resetHistory();
     bump();
   }, [bump, setActiveIdx, showRenameNotice]);
@@ -370,7 +380,8 @@ export default function App() {
     settingsRef.current = result.settings;
     nameRef.current = result.name;
     workbookIdRef.current = null;
-    setActiveIdx(0);
+    setActiveIdx(result.view.activeSheet);
+    gridApiRef.current?.setSelection(result.view.activeCell);
     resetHistory();
     bump();
   }, [bump, setActiveIdx]);
@@ -612,7 +623,7 @@ export default function App() {
               <button
                 className="menu-item"
                 onClick={() => {
-                  setFormatStringDialog({ initial: gridFormatApiRef.current?.activeFormatString() ?? "" });
+                  setFormatStringDialog({ initial: gridApiRef.current?.activeFormatString() ?? "" });
                   closeFormatMenu();
                 }}
               >
@@ -680,7 +691,7 @@ export default function App() {
         onShowHelp={() => setHelpOpen(true)}
         onSave={handleStorageSave}
         onOpen={handleStorageOpen}
-        formatApi={gridFormatApiRef}
+        gridApi={gridApiRef}
       />
       {aboutOpen && (
         <AboutDialog
@@ -711,7 +722,7 @@ export default function App() {
       {formatStringDialog && (
         <FormatStringDialog
           initial={formatStringDialog.initial}
-          onApply={(fs) => gridFormatApiRef.current?.applyFormat({ kind: "formatString", value: fs })}
+          onApply={(fs) => gridApiRef.current?.applyFormat({ kind: "formatString", value: fs })}
           onClose={() => setFormatStringDialog(null)}
         />
       )}
