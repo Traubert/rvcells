@@ -71,6 +71,24 @@ function selectionBounds(
   };
 }
 
+/** Text offset at a viewport point, for placing the caret where a read-only span was clicked */
+function caretOffsetFromPoint(x: number, y: number): number | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  if (doc.caretPositionFromPoint) {
+    const pos = doc.caretPositionFromPoint(x, y);
+    // Only a text-node offset is a character index; an element offset is a child index
+    return pos && pos.offsetNode.nodeType === Node.TEXT_NODE ? pos.offset : null;
+  }
+  if (doc.caretRangeFromPoint) {
+    const range = doc.caretRangeFromPoint(x, y);
+    return range && range.startContainer.nodeType === Node.TEXT_NODE ? range.startOffset : null;
+  }
+  return null;
+}
+
 interface GridProps {
   sheet: Sheet;
   allSheets: Sheet[];
@@ -127,6 +145,8 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
   const [lockedRange, setLockedRange] = useState<LockedRange | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const barInputRef = useRef<HTMLInputElement>(null);
+  // Caret position to restore in the formula bar input, captured from the click on the read-only span
+  const barCaretRef = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const clipboardRef = useRef<ClipboardData | null>(null);
 
@@ -136,7 +156,12 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
     } else if (!editingAddr && gridRef.current) {
       gridRef.current.focus();
     }
-    // Formula bar input focuses itself via autoFocus
+    // Formula bar input focuses itself via autoFocus; place the caret where the span was clicked
+    if (editingAddr && editingInBar && barInputRef.current && barCaretRef.current !== null) {
+      const pos = Math.min(barCaretRef.current, barInputRef.current.value.length);
+      barInputRef.current.setSelectionRange(pos, pos);
+      barCaretRef.current = null;
+    }
   }, [editingAddr, editingInBar]);
 
   // Focus grid on mount
@@ -762,9 +787,10 @@ export function Grid({ sheet, allSheets, sheetIndex, settings, onSheetChange, on
         ) : (
           <span
             className="formula-bar-content"
-            onClick={() => {
+            onClick={(e) => {
               if (selectedAddr) {
                 const cell = sheet.cells.get(selectedAddr);
+                barCaretRef.current = caretOffsetFromPoint(e.clientX, e.clientY);
                 startEditing(selectedAddr, cell?.raw ?? "", true);
               }
             }}
