@@ -16,6 +16,7 @@ A spreadsheet application where **random variables are a first-class cell type**
 - `src/engine/parser.test.ts` — parser test suite (vitest)
 - `src/engine/distributions.ts` — sampling from distributions (Box-Muller, Marsaglia-Tsang, inverse CDF)
 - `src/engine/evaluate.ts` — global multi-sheet DAG evaluation, incremental recalculation, cycle detection, built-in functions, Chain/ChainIndex search, Markov compilation and evaluation, summary stats, histograms, sheet rename/delete helpers
+- `src/engine/stats.ts` — Welford online mean/variance (bit-exact on constant arrays; used by summarize, mean/geomean collapse, Sobol, effect sizes)
 - `src/engine/storage.ts` — localStorage persistence, zip mass export/import
 - `src/engine/file.ts` — JSON file format v3 (multi-sheet, cell formats, sparse view state), migration ladder for older versions, import/export
 - `src/constants.ts` — shared string, numeric, and distribution name constants

@@ -3,6 +3,7 @@ import { toAddress, parseAddress } from "./types";
 import { sample } from "./distributions";
 import { parseCell } from "./parser";
 import { splitFormulaText } from "./fill";
+import { sampleMean, sampleMeanBy, sampleMeanVar } from "./stats";
 import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, DEFAULT_CHAIN_SEARCH_LIMIT, SAMPLE_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
 import type { InlineSample } from "./types";
 
@@ -1042,9 +1043,7 @@ function evalFunc(
       case "mean": {
         if (!isAggregate && values[0].kind === "samples") {
           // Collapse: expected value
-          const arr = values[0].values;
-          let s = 0; for (let i = 0; i < arr.length; i++) s += arr[i];
-          return { kind: "scalar", value: s / arr.length };
+          return { kind: "scalar", value: sampleMean(values[0].values) };
         }
         if (!isAggregate) return values[0]; // scalar identity
         const sum = reduceElementwise(values, (a, b) => a + b, n);
@@ -1079,8 +1078,7 @@ function evalFunc(
         if (!isAggregate && values[0].kind === "samples") {
           // Collapse: geometric mean of samples
           const arr = values[0].values;
-          let logSum = 0; for (let i = 0; i < arr.length; i++) logSum += Math.log(arr[i]);
-          return { kind: "scalar", value: Math.exp(logSum / arr.length) };
+          return { kind: "scalar", value: Math.exp(sampleMeanBy(arr.length, i => Math.log(arr[i]))) };
         }
         if (!isAggregate) return values[0];
         // Elementwise geometric mean: exp(mean(log(values)))
@@ -2128,13 +2126,8 @@ export function summarize(result: CellResult): {
   const vals = result.values;
   const n = vals.length;
 
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += vals[i];
-  const mean = sum / n;
-
-  let sumSq = 0;
-  for (let i = 0; i < n; i++) sumSq += (vals[i] - mean) ** 2;
-  const std = Math.sqrt(sumSq / n);
+  const { mean, variance } = sampleMeanVar(vals);
+  const std = Math.sqrt(variance);
 
   // Sort a copy for percentiles
   const sorted = new Float64Array(vals).sort();
@@ -3017,9 +3010,8 @@ export function computeSobolFirstOrder(x: Float64Array, y: Float64Array): number
   if (binSize < 2) return 0;
 
   // Overall mean of y
-  let yMean = 0;
-  for (let i = 0; i < n; i++) yMean += y[i];
-  yMean /= n;
+  const { mean: yMean, variance: totalVar } = sampleMeanVar(y.subarray(0, n));
+  if (totalVar <= 0) return 0;
 
   // Bin means and the weighted variance of bin means
   let weightedBinVar = 0;
@@ -3027,23 +3019,11 @@ export function computeSobolFirstOrder(x: Float64Array, y: Float64Array): number
   for (let b = 0; b < numBins; b++) {
     const end = (b === numBins - 1) ? n : pos + binSize;
     const count = end - pos;
-    let sum = 0;
-    for (let i = pos; i < end; i++) sum += y[sortedIdx[i]];
-    const mean = sum / count;
-    const d = mean - yMean;
+    const d = sampleMeanBy(count, i => y[sortedIdx[pos + i]]) - yMean;
     weightedBinVar += count * d * d;
     pos = end;
   }
   weightedBinVar /= n;
-
-  // Total variance of y
-  let totalVar = 0;
-  for (let i = 0; i < n; i++) {
-    const d = y[i] - yMean;
-    totalVar += d * d;
-  }
-  totalVar /= n;
-  if (totalVar <= 0) return 0;
 
   return Math.max(0, Math.min(1, weightedBinVar / totalVar));
 }
@@ -3112,12 +3092,8 @@ export function computeRegressionSensitivity(
   }
 
   // Centre inputs and output
-  const xMeans = inputs.map(x => {
-    let s = 0; for (let i = 0; i < n; i++) s += x[i]; return s / n;
-  });
-  let yMean = 0;
-  for (let i = 0; i < n; i++) yMean += output[i];
-  yMean /= n;
+  const xMeans = inputs.map(x => sampleMean(x));
+  const yMean = sampleMean(output);
 
   const Xc: Float64Array[] = inputs.map((x, j) => {
     const c = new Float64Array(n);

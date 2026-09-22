@@ -875,6 +875,25 @@ describe("Chain", () => {
     expect(mean(sheet, "B1")).toBeCloseTo(5, 5);
   });
 
+  it("constant chain stepped past 0 reports std exactly 0 (Welford, not Σx/n)", () => {
+    // Regression: total = 700309.68 is not exactly representable; the naive
+    // mean over 10k broadcast copies came back as 700309.6800000721, and the
+    // detail panel showed "72.1n" for std at every step ≥ 1.
+    const sheet = makeSheet({
+      A1: "Total",
+      B1: ":= Chain(Total, sum(B6:B8))",
+      B6: "579000",
+      B7: "= 30407 + 76369",
+      B8: "= 0 + 466.52 + 0 + 67.16 + 14000",
+      C1: "= Total[1]",
+      D1: "= mean(Total[3])",
+    });
+    expect(scalarValue(sheet, "B1")).toBe(700309.68);
+    expect(mean(sheet, "C1")).toBe(700309.68);
+    expect(std(sheet, "C1")).toBe(0);
+    expect(scalarValue(sheet, "D1")).toBe(700309.68);
+  });
+
   it("chain with distribution produces samples", () => {
     const sheet = makeSheet({
       A1: "x = Chain(x + Normal(0, 1), 0)",
