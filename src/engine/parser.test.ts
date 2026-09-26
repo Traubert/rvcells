@@ -14,6 +14,14 @@ describe("parseCell", () => {
     expect(parseCell("  100  ").content).toEqual({ kind: "number", value: 100 });
   });
 
+  it("parses percent literals as numbers divided by 100", () => {
+    expect(parseCell("10%").content).toEqual({ kind: "number", value: 0.1 });
+    expect(parseCell("-2.5%").content).toEqual({ kind: "number", value: -0.025 });
+    expect(parseCell(" 100 % ").content).toEqual({ kind: "number", value: 1 });
+    expect(parseCell("%").content).toEqual({ kind: "text", value: "%" });
+    expect(parseCell("rate = 7%").content).toEqual({ kind: "number", value: 0.07 });
+  });
+
   it("parses text", () => {
     expect(parseCell("hello").content).toEqual({ kind: "text", value: "hello" });
     expect(parseCell("some label").content).toEqual({ kind: "text", value: "some label" });

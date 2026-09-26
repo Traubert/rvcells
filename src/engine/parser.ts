@@ -63,9 +63,9 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
     }
   }
 
-  // Try as number
-  const num = Number(trimmed);
-  if (!isNaN(num) && trimmed !== "") {
+  // Try as number (optionally a percent literal: "10%" → 0.1)
+  const num = parseNumberLiteral(trimmed);
+  if (num !== null) {
     return { content: { kind: "number", value: num } };
   }
 
@@ -89,6 +89,18 @@ export function parseCell(raw: string): { content: CellContent; variableName?: s
   return { content: { kind: "text", value: trimmed } };
 }
 
+/** Parse a bare numeric literal, with an optional `%` suffix meaning ÷100.
+ *  Null if the string is not a number. */
+function parseNumberLiteral(s: string): number | null {
+  if (s === "") return null;
+  const pct = s.endsWith("%");
+  const body = pct ? s.slice(0, -1).trim() : s;
+  if (body === "") return null;
+  const num = Number(body);
+  if (isNaN(num)) return null;
+  return pct ? num / 100 : num;
+}
+
 /** Parse `mean ± spread` or `mean +- spread[%]` as a constant Normal distribution. */
 function parseSpreadShorthand(s: string): Distribution | null {
   const match = s.match(/^(-?[0-9.eE]+)\s*(?:±|\+-)\s*(-?[0-9.eE]+)(%?)$/);
@@ -106,8 +118,8 @@ function parseSpreadShorthand(s: string): Distribution | null {
  *  expression. On failure, returns the expression parse error message. */
 function parseRHS(rhs: string): { content: CellContent } | { error: string } {
   // Number?
-  const num = Number(rhs);
-  if (!isNaN(num) && rhs !== "") {
+  const num = parseNumberLiteral(rhs);
+  if (num !== null) {
     return { content: { kind: "number", value: num } };
   }
 
@@ -278,7 +290,7 @@ function tokenize(input: string): Token[] {
       while (i < input.length && /[0-9.eE]/.test(input[i])) {
         num += input[i++];
       }
-      // Optional `%` suffix → percent literal
+      // Optional `%` suffix → percent literal (÷100; CV semantics as a spread arg)
       if (input[i] === "%") {
         i++;
         tokens.push({ type: "percent", value: Number(num) });
@@ -817,7 +829,7 @@ class Parser {
 function describeToken(tok: Token): string {
   switch (tok.type) {
     case "number": return String(tok.value);
-    case "percent": return `${tok.value * 100}%`;
+    case "percent": return `${tok.value}%`;
     case "cellRef": return toAddress(tok.col, tok.row);
     case "ident": return tok.original;
     case "quotedName": return `'${tok.name}'`;

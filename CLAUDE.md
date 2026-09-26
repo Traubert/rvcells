@@ -61,6 +61,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Cell editing: type a number, a distribution spec, or a formula
 - [x] Distribution types: Normal, LogNormal, Uniform, Triangular, Beta, Pareto, Poisson, StudentT
   - Argless forms with sensible defaults: `Normal()` = N(0,1), `LogNormal()` = exp(Z), `Uniform()` = U(0,1), `Triangular()` = symmetric on [0,1], `Poisson()` = Poisson(1), `Bernoulli()` = fair coin
+  - Percent literals: `10%` is a numeric literal meaning 0.1 everywhere (cell values, `name = 7%`, formulas, any function argument). The one contextual reading is a *bare* percent literal in the spread slot of Normal/LogNormal/`±`, which means CV; a computed spread like `10% * 1` is a plain 0.1
   - Percent CV syntax for Normal and LogNormal: `Normal(100, 10%)` → std = 10; `LogNormal(100, 10%)` interprets first arg as arithmetic mean, second as arithmetic CV (σ_log = √log(1+cv²), μ_log = log(mean) − σ_log²/2). LogNormal arithmetic mean must be > 0
   - `±` / `+-` shorthand for Normal: `100 ± 10` or `100 +- 10` (cell-form stored as a constant Distribution; in formulas, `±` is a binary operator with lower precedence than `+`/`*` that desugars to `Normal(mean, spread)`). Percent CV combines: `150 +- 10%`
 - [x] Formula parser: arithmetic operators (+, -, *, /), comparison operators (==, !=, >, <, >=, <=), cell references (A1, B2), parentheses, unary minus

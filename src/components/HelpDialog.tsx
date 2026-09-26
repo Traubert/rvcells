@@ -28,7 +28,7 @@ const PAGES = [
               <tr className="help-subrow"><td><code>Normal()</code></td><td>Standard normal — mean 0, std 1</td></tr>
               <tr><td><code>LogNormal(mu, sigma)</code></td><td>Log-normal (log-space parameters)</td></tr>
               <tr className="help-subrow"><td><code>LogNormal()</code></td><td>Log-space mean 0 and std 1</td></tr>
-              <tr><td><code>Normal(250, 10%)</code> / <br/><code>LogNormal(250, 10%)</code></td><td>Coefficient of Variation, or Relative Standard Deviation — here, std is 25. Also works with the ± shorthand: <code>250 +- 10%</code>.</td></tr>
+              <tr><td><code>Normal(250, 10%)</code> / <br/><code>LogNormal(250, 10%)</code></td><td>Coefficient of Variation, or Relative Standard Deviation — here, std is 25. Also works with the ± shorthand: <code>250 +- 10%</code>. Anywhere else, <code>10%</code> is just the number 0.1: <code>= price * 24%</code>, <code>Bernoulli(30%)</code>, or <code>7%</code> typed into a cell.</td></tr>
               <tr><td><code>Uniform(low, high)</code></td><td>Uniform</td></tr>
               <tr className="help-subrow"><td><code>Uniform()</code></td><td>Uniform on [0,&nbsp;1]</td></tr>
               <tr><td><code>Triangular(low, mode, high)</code></td><td>Triangular</td></tr>

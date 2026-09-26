@@ -17,7 +17,7 @@ export type Distribution =
 /** AST node types for parsed formulas */
 export type Expr =
   | { type: "number"; value: number }
-  | { type: "percent"; value: number } // `10%` literal — only valid as the spread arg of Normal()/LogNormal()
+  | { type: "percent"; value: number } // `10%` literal: evaluates to value/100; as the bare spread arg of Normal()/LogNormal()/± it means CV (relative to the mean)
   | { type: "cellRef"; col: number; row: number; pinCol?: boolean; pinRow?: boolean } // 0-indexed
   | { type: "varRef"; name: string }
   | { type: "sheetCellRef"; sheet: string; col: number; row: number; pinCol?: boolean; pinRow?: boolean }

@@ -75,6 +75,32 @@ describe("basic cell types", () => {
   });
 });
 
+describe("percent literals", () => {
+  it("evaluate to the number divided by 100", () => {
+    const sheet = makeSheet({ A1: "= 10%", B1: "= 200 * 15%", C1: "= 1 - 2.5%" });
+    expect(scalarValue(sheet, "A1")).toBeCloseTo(0.1, 12);
+    expect(scalarValue(sheet, "B1")).toBeCloseTo(30, 12);
+    expect(scalarValue(sheet, "C1")).toBeCloseTo(0.975, 12);
+  });
+
+  it("are plain numbers in distribution arguments other than the spread slot", () => {
+    const sheet = makeSheet({ A1: "= Uniform(0, 50%)", B1: "= Bernoulli(30%)" });
+    expect(mean(sheet, "A1")).toBeCloseTo(0.25, 1);
+    expect(mean(sheet, "B1")).toBeCloseTo(0.3, 1);
+  });
+
+  it("a bare literal in the spread slot still means CV, a computed one does not", () => {
+    const sheet = makeSheet({
+      A1: "= Normal(100, 10%)",
+      B1: "= Normal(100, 10% * 1)",
+      C1: "= 100 +- 10%",
+    }, 20_000);
+    expect(std(sheet, "A1")).toBeCloseTo(10, 0);
+    expect(std(sheet, "B1")).toBeCloseTo(0.1, 1);
+    expect(std(sheet, "C1")).toBeCloseTo(10, 0);
+  });
+});
+
 describe("scalar arithmetic", () => {
   it("adds two scalars", () => {
     const sheet = makeSheet({ A1: "10", B1: "20", C1: "= A1 + B1" });

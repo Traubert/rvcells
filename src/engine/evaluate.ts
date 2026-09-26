@@ -340,7 +340,7 @@ function evalExpr(
       return { kind: "scalar", value: expr.value };
 
     case "percent":
-      throw new Error("'%' is only valid as the spread argument of Normal() or LogNormal()");
+      return { kind: "scalar", value: expr.value / 100 };
 
     case "cellRef": {
       const addr = toAddress(expr.col, expr.row);
@@ -1136,18 +1136,10 @@ function evalFunc(
 
   // ─── Regular functions (no range support) ─────────────────────────────
 
-  // Percent literals are valid only as the spread arg of Normal()/LogNormal().
-  // Pass them through as placeholder scalars; the normal/lognormal cases inspect
-  // argExprs[i].type to recognize and apply CV semantics.
-  const allowsPercent = name === "normal" || name === "lognormal";
-  const args = argExprs.map((e, i) => {
-    if (e.type === "percent") {
-      if (!allowsPercent || i !== 1)
-        throw new Error("'%' is only valid as the spread argument of Normal() or LogNormal()");
-      return { kind: "scalar" as const, value: e.value };
-    }
-    return evalExpr(e, results, varMap, n, cells, ctx);
-  });
+  // Percent literals evaluate to value/100 like anywhere else; the normal and
+  // lognormal cases additionally inspect argExprs[1].type to give a bare
+  // percent literal in the spread slot CV semantics (relative to the mean).
+  const args = argExprs.map((e) => evalExpr(e, results, varMap, n, cells, ctx));
 
   switch (name) {
     // Math functions — 1 argument
