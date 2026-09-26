@@ -93,7 +93,7 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Chain(body, init): iterative process with lazy evaluation, auto-resample, cross-chain sync
 - [x] chain[step] bracket syntax: access distribution at a specific chain step
 - [x] ChainIndex(chain, condition): search for first step where condition is true (e.g. `mean(x) > 100`)
-- [x] `_t` contextual variable inside Chain bodies (current step number)
+- [x] `_t` and `_self` contextual variables inside Chain/Markov bodies (current step number; previous step's value — lets an unnamed cell reference itself, and is what compiled Markov bodies switch on, so Markov needs no variable name either)
 - [x] Markov(states; init): transition diagram syntax compiling to Chain/Discrete/if
   - State names reference emission distributions (variables, cell refs, or cross-sheet refs)
   - Inline emission definitions: `s0 = Normal(100, 10): 0.5 -> s1`

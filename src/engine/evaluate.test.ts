@@ -969,6 +969,59 @@ describe("Chain", () => {
     expect(sheet.cells.get("A1")!.error).toContain("reserved");
   });
 
+  it("_self is the previous step, so an unnamed chain can reference itself", () => {
+    const sheet = makeSheet({
+      A1: "= Chain(_self + 1, 0)",
+      B1: "= A1[5]",
+    });
+    expect(sheet.cells.get("A1")!.error).toBeUndefined();
+    expect(mean(sheet, "B1")).toBeCloseTo(5, 5);
+  });
+
+  it("_self and the chain's own name refer to the same previous step", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(_self * 2 + x, 1)",
+      B1: "= x[2]",
+    });
+    // step 1: 1*2 + 1 = 3, step 2: 3*2 + 3 = 9
+    expect(mean(sheet, "B1")).toBeCloseTo(9, 5);
+  });
+
+  it("_self binds to the innermost chain when chains reference each other", () => {
+    const sheet = makeSheet({
+      A1: "x = Chain(_self + 1, 0)",
+      A2: "y = Chain(_self + x, 0)",
+      B1: "= y[3]",
+    });
+    // x auto-syncs to y's step: y[t] = y[t-1] + x[t] → 1 + 2 + 3 = 6
+    expect(mean(sheet, "B1")).toBeCloseTo(6, 5);
+    expect(sheet.cells.get("A2")!.error).toBeUndefined();
+  });
+
+  it("_self outside a chain body is an error", () => {
+    const sheet = makeSheet({ A1: "= _self + 1" });
+    expect(sheet.cells.get("A1")!.error).toContain("_self is only valid inside a Chain or Markov body");
+  });
+
+  it("_self cannot be used as a variable name", () => {
+    const sheet = makeSheet({ A1: "_self = 5" });
+    expect(sheet.cells.get("A1")!.error).toContain("reserved");
+  });
+
+  it("Markov works without a variable name", () => {
+    const sheet = makeSheet({
+      A1: "lo = 0",
+      A2: "hi = 1",
+      A3: "= Markov(lo: 1 -> hi; hi: 1 -> lo)",
+      B1: "= A3[1]",
+      B2: "= A3[2]",
+    });
+    expect(sheet.cells.get("A3")!.error).toBeUndefined();
+    // Deterministic alternation starting in lo: step 1 = hi, step 2 = lo
+    expect(mean(sheet, "B1")).toBeCloseTo(1, 5);
+    expect(mean(sheet, "B2")).toBeCloseTo(0, 5);
+  });
+
   it("cache invalidation on recalculate", () => {
     const sheet = makeSheet({
       A1: "init = 10",

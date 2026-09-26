@@ -105,10 +105,11 @@ const PAGES = [
           <h3>Iterative processes</h3>
           <table className="help-table">
             <tbody>
-              <tr><td><code>Chain(body, init)</code></td><td>Iterative process; body uses own variable as previous step</td></tr>
+              <tr><td><code>Chain(body, init)</code></td><td>Iterative process; body uses <code>_self</code> (or the cell&apos;s own variable name) as the previous step</td></tr>
               <tr><td><code>chain[n]</code></td><td>Distribution at step n</td></tr>
               <tr><td><code>chain[a:b]</code></td><td>Range of steps (for use with sum, mean, etc.)</td></tr>
               <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
+              <tr><td><code>_self</code></td><td>Previous step&apos;s value inside a Chain body</td></tr>
               <tr><td><code>_t</code></td><td>Current step number inside a Chain body</td></tr>
             </tbody>
           </table>

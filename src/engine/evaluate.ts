@@ -21,6 +21,10 @@ let _currentEvalCell: Cell | null = null;
 /** Current chain step number — used by _t variable inside chain bodies. */
 let _currentChainStep: number | null = null;
 
+/** Previous-step value of the chain being stepped — used by _self inside
+ *  Chain/Markov bodies. Set only while a body is being evaluated. */
+let _currentChainSelf: CellResult | null = null;
+
 /** Global cell address: "sheetIdx:cellAddr" */
 type GlobalAddr = string;
 
@@ -133,7 +137,7 @@ function resolveLabelVars(cells: Map<CellAddress, Cell>): void {
   }
 }
 
-const RESERVED_VARS = new Set(["_t"]);
+const RESERVED_VARS = new Set(["_t", "_self"]);
 
 /** Build a map from variable name → cell address.
  *  First definition wins; subsequent duplicates get marked with errors.
@@ -348,6 +352,11 @@ function evalExpr(
       if (expr.name === "_t" && _currentChainStep !== null) {
         return { kind: "scalar", value: _currentChainStep };
       }
+      // _self is the previous step's value inside Chain/Markov bodies
+      if (expr.name === "_self") {
+        if (_currentChainSelf === null) throw new Error("_self is only valid inside a Chain or Markov body");
+        return _currentChainSelf;
+      }
       const addr = varMap.get(expr.name);
       if (!addr) throw new Error(`Unknown variable: ${expr.name}`);
       const res = results.get(addr);
@@ -396,11 +405,6 @@ function evalExpr(
       return evalFunc(expr.name, expr.args, results, varMap, n, cells, ctx);
 
     case "markov": {
-      const selfVar = _currentEvalCell?.variableName;
-      if (!selfVar) throw new Error("Markov() must be assigned to a named variable");
-      const selfAddr = varMap.get(selfVar);
-      if (!selfAddr) throw new Error("Markov() variable not found in varMap");
-
       // Compile transition matrix and validate state references
       const { stateNames, transitions } = compileMarkovDef(expr.states, expr.init);
 
@@ -415,19 +419,19 @@ function evalExpr(
         }
       }
 
-      // Compile to Chain-compatible Expr trees
-      const stateBody = compileMarkovStateBody(selfVar, transitions);
-      const emissionBody = compileMarkovEmissionBody(selfVar, expr.states);
+      // Compile to Chain-compatible Expr trees; the compiled bodies switch on
+      // _self (the current state), so the cell needs no variable name
+      const stateBody = compileMarkovStateBody("_self", transitions);
+      const emissionBody = compileMarkovEmissionBody("_self", expr.states);
       const initExpr = compileMarkovInit(expr.init, stateNames);
 
       // Evaluate initial state (scalar for deterministic, samples for Discrete)
       const initStateResult = evalExpr(initExpr, results, varMap, n, cells, ctx);
       const initialStates = toArray(initStateResult, n);
 
-      // Evaluate initial emission by injecting initial state as self-reference
-      const shadowResults = new Map(results);
-      shadowResults.set(selfAddr, { kind: "samples", values: initialStates });
-      const initialEmission = evalExpr(emissionBody, shadowResults, varMap, n, cells, ctx);
+      // Evaluate initial emission with the initial state as _self
+      const initialEmission = withChainSelf({ kind: "samples", values: initialStates }, () =>
+        evalExpr(emissionBody, results, varMap, n, cells, ctx));
 
       // Store as Chain metadata — reuses Chain infrastructure for timeline/ChainIndex
       if (_currentEvalCell) {
@@ -666,6 +670,17 @@ function compileMarkovEmissionBody(selfName: string, states: MarkovStateDef[]): 
   return buildStateSwitch(selfName, states.map(s => s.emission));
 }
 
+/** Run `fn` with `_self` bound to `self` (save/restore for nested chains). */
+function withChainSelf<T>(self: CellResult, fn: () => T): T {
+  const prev = _currentChainSelf;
+  _currentChainSelf = self;
+  try {
+    return fn();
+  } finally {
+    _currentChainSelf = prev;
+  }
+}
+
 /** Lazily compute chain steps up to targetStep, caching results.
  *  Referenced distribution cells are auto-resampled each step.
  *  Referenced chain cells are auto-synced to the same step. */
@@ -757,19 +772,24 @@ function evaluateChainStep(
 
     if (isMarkov) {
       // Markov: two-phase evaluation wrapping two internal Chains
-      // Phase 1 — state transition: self-ref = previous state
-      shadowResults.set(chainAddr, { kind: "samples", values: chainCell.markovStateCache![t - 1] });
-      const newState = evalExpr(chainCell.markovDef!.stateBody, shadowResults, varMap, n, cells, ctx);
+      // Phase 1 — state transition: _self = previous state
+      const prevState: CellResult = { kind: "samples", values: chainCell.markovStateCache![t - 1] };
+      const newState = withChainSelf(prevState, () =>
+        evalExpr(chainCell.markovDef!.stateBody, shadowResults, varMap, n, cells, ctx));
       chainCell.markovStateCache![t] = toArray(newState, n);
 
-      // Phase 2 — emission: self-ref = new state (so emission body selects correct distribution)
-      shadowResults.set(chainAddr, { kind: "samples", values: chainCell.markovStateCache![t] });
-      const emission = evalExpr(chainCell.chainBody, shadowResults, varMap, n, cells, ctx);
+      // Phase 2 — emission: _self = new state (so emission body selects correct distribution)
+      const curState: CellResult = { kind: "samples", values: chainCell.markovStateCache![t] };
+      const emission = withChainSelf(curState, () =>
+        evalExpr(chainCell.chainBody!, shadowResults, varMap, n, cells, ctx));
       chainCell.chainCache[t] = toArray(emission, n);
     } else {
-      // Regular Chain: self-ref = previous step's value
-      shadowResults.set(chainAddr, { kind: "samples", values: chainCell.chainCache[t - 1] });
-      const stepResult = evalExpr(chainCell.chainBody, shadowResults, varMap, n, cells, ctx);
+      // Regular Chain: previous step's value is _self, and is also injected
+      // under the cell's address so the chain's own name/address resolve to it
+      const prev: CellResult = { kind: "samples", values: chainCell.chainCache[t - 1] };
+      shadowResults.set(chainAddr, prev);
+      const stepResult = withChainSelf(prev, () =>
+        evalExpr(chainCell.chainBody!, shadowResults, varMap, n, cells, ctx));
       chainCell.chainCache[t] = toArray(stepResult, n);
     }
 
@@ -955,7 +975,7 @@ function evalFunc(
     const bodyDeps = exprDeps(argExprs[0]);
     const selfVar = _currentEvalCell?.variableName;
     for (const v of bodyDeps.varRefs) {
-      if (v === selfVar || v === "_t") continue;
+      if (v === selfVar || RESERVED_VARS.has(v)) continue;
       if (!varMap.get(v)) throw new Error(`Unknown variable in Chain body: ${v}`);
     }
     // Store chain metadata on the cell for lazy step computation
