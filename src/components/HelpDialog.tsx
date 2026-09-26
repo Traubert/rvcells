@@ -112,6 +112,7 @@ const PAGES = [
               <tr><td><code>chain[n]</code></td><td>Distribution at step n</td></tr>
               <tr><td><code>chain[a:b]</code></td><td>Range of steps (for use with sum, mean, etc.)</td></tr>
               <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
+              <tr><td><code>fixed(cell)</code></td><td>Inside a chain step, keep the cell&apos;s per-world samples instead of redrawing them (the opposite of the default)</td></tr>
               <tr><td><code>_self</code></td><td>Previous step&apos;s value inside a Chain body</td></tr>
               <tr><td><code>_t</code></td><td>Current step number inside a Chain body</td></tr>
               <tr><td><code>StickyRedraw(dist, p)</code></td><td>Each step keeps the previous value with probability p, otherwise redraws from <em>dist</em>. Marginal stays <em>dist</em>; lag-1 autocorrelation is p</td></tr>
@@ -120,6 +121,7 @@ const PAGES = [
           </table>
           <p className="help-note"><code>AutoRegression()</code> picks the construction by family: Normal is a Gaussian AR(1); LogNormal runs the AR(1) on the log (phi applies to logs); Poisson is INAR(1) via binomial thinning, so counts stay integers; Bernoulli and Discrete use sticky redraw; anything else (Beta, Uniform, Triangular, Pareto, StudentT) uses a Gaussian copula, so phi is a rank correlation. Both are Chains: <code>x[n]</code>, ChainIndex and the Timeline tab all work.</p>
           <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Referenced chains auto-sync to the same step.</p>
+          <p className="help-note">Chains compose: a formula that reads a chain directly (<code>= a * b</code>, <code>= cost * 1.2</code>) is itself a chain, whose step <em>n</em> is the formula at step <em>n</em> of every chain it reads. The cell shows step 0; use <code>[n]</code>, ChainIndex, or the Timeline tab for the rest. Any plain distribution such a formula reads is redrawn each step like in a Chain body, so wrap an uncertain-but-constant parameter in <code>fixed()</code>: <code>= share * fixed(house_value)</code>.</p>
           <p className="help-note"><code>ChainIndex(chain, cond)</code> searches for the first step where a condition holds. The condition is evaluated at each step with the chain mapped to that step&apos;s distribution, and must reduce it to a scalar using <code>mean()</code>, <code>P()</code>, <code>min()</code>, etc.:</p>
           <table className="help-table">
             <tbody>

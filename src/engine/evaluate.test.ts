@@ -1267,6 +1267,107 @@ describe("AutoRegression", () => {
   });
 });
 
+describe("implicit chain lifting", () => {
+  it("a formula reading chains becomes a chain of the formula at each step", () => {
+    const sheet = makeSheet({
+      A1: "a = Chain(_self + 1, 0)",
+      A2: "b = Chain(_self * 2, 1)",
+      A3: "c = a * b",
+      B1: "= c[3]",
+    });
+    expect(sheet.cells.get("A3")!.chainBody).toBeDefined();
+    expect(scalarValue(sheet, "A3")).toBe(0);      // displayed value is step 0: 0 * 1
+    expect(mean(sheet, "B1")).toBeCloseTo(24, 6);  // a[3] * b[3] = 3 * 8
+  });
+
+  it("lifts transitively and syncs inside explicit chains", () => {
+    const sheet = makeSheet({
+      A1: "a = Chain(_self + 1, 0)",
+      A2: "b = Chain(_self * 2, 1)",
+      A3: "c = a * b",
+      A4: "d = c + 1",
+      A5: "g = Chain(_self + c, 0)",
+      B1: "= d[3]",
+      B2: "= g[2]",
+    });
+    expect(sheet.cells.get("A4")!.chainBody).toBeDefined();
+    expect(mean(sheet, "B1")).toBeCloseTo(25, 6);
+    expect(mean(sheet, "B2")).toBeCloseTo(10, 6);  // c[1] + c[2] = 2 + 8
+  });
+
+  it("does not lift step indexing, step ranges, or ChainIndex targets", () => {
+    const sheet = makeSheet({
+      A1: "a = Chain(_self + 1, 0)",
+      B1: "= a[2] * 10",
+      B2: "= mean(a[0:3])",
+      B3: "= ChainIndex(a, mean(a) >= 2)",
+    });
+    for (const addr of ["B1", "B2", "B3"]) expect(sheet.cells.get(addr)!.chainBody).toBeUndefined();
+    expect(scalarValue(sheet, "B3")).toBe(2);
+  });
+
+  it("a step index mixed with a direct read still lifts", () => {
+    const sheet = makeSheet({
+      A1: "a = Chain(_self + 1, 0)",
+      A2: "m = a[2] + a",
+      B1: "= m[5]",
+    });
+    expect(mean(sheet, "B1")).toBeCloseTo(7, 6);  // a[2] + a[5]
+  });
+
+  it("un-lifts when the referenced cell stops being a chain", () => {
+    const sheet = makeSheet({ A1: "a = Chain(_self + 1, 0)", B1: "= a * 2" });
+    expect(sheet.cells.get("B1")!.chainBody).toBeDefined();
+    setCellRaw(sheet, "A1", "a = 5", undefined, undefined, settingsWithSamples(1000));
+    expect(sheet.cells.get("B1")!.chainBody).toBeUndefined();
+    expect(scalarValue(sheet, "B1")).toBe(10);
+  });
+
+  it("temporary re-evaluation inside a chain step never attaches chain state to the reading cell", () => {
+    const sheet = makeSheet({
+      A1: "h = Normal()",
+      A2: "a = Chain(_self + 1, 0)",
+      A3: "q = a[3] * h",                 // depends on a chain but is not lifted
+      A4: "z = Chain(_self + q, 0)",      // resamples q (and its sub-DAG, incl. a) each step
+      B1: "= z[2]",
+    });
+    expect(sheet.cells.get("B1")!.error).toBeUndefined();
+    expect(sheet.cells.get("B1")!.chainBody).toBeUndefined();
+    expect(sheet.cells.get("A3")!.chainBody).toBeUndefined();
+  });
+});
+
+describe("fixed()", () => {
+  it("holds a cell's per-world samples across steps; bare references are redrawn", () => {
+    const sheet = makeSheet({
+      A1: "h = Normal(100, 10)",
+      A2: "a = Chain(_self + 1, 0)",
+      A3: "held = a * fixed(h)",
+      A4: "redrawn = a * h",
+      B1: "= held[3] - 3 * h",
+      B2: "= redrawn[3] - 3 * h",
+    }, 2000);
+    expect(sheet.cells.get("A3")!.chainBody).toBeDefined();
+    expect(std(sheet, "B1")).toBe(0);
+    expect(std(sheet, "B2")).toBeGreaterThan(1);
+  });
+
+  it("works the same inside an explicit Chain body", () => {
+    const sheet = makeSheet({
+      A1: "h = Normal(100, 10)",
+      A2: "x = Chain(_self + fixed(h), 0)",
+      B1: "= x[4] - 4 * h",
+    }, 2000);
+    expect(std(sheet, "B1")).toBe(0);
+  });
+
+  it("is the identity outside a chain", () => {
+    const sheet = makeSheet({ A1: "h = Normal()", B1: "= fixed(h) - h", C1: "= fixed(3) + 1" });
+    expect(std(sheet, "B1")).toBe(0);
+    expect(scalarValue(sheet, "C1")).toBe(4);
+  });
+});
+
 describe("ChainIndex search", () => {
   it("finds first step where mean exceeds threshold", () => {
     const sheet = makeSheet({

@@ -25,6 +25,10 @@ let _currentChainStep: number | null = null;
  *  Chain/Markov bodies. Set only while a body is being evaluated. */
 let _currentChainSelf: CellResult | null = null;
 
+/** The un-shadowed results while a chain step is being evaluated — what
+ *  fixed(cell) reads, so a held cell keeps its per-world samples. */
+let _chainBaseResults: Map<CellAddress, CellResult> | null = null;
+
 /** Global cell address: "sheetIdx:cellAddr" */
 type GlobalAddr = string;
 
@@ -44,8 +48,9 @@ interface SheetRef {
   varName?: string;      // for sheetVarRef
 }
 
-/** Collect all cell/variable dependencies from an expression */
-function exprDeps(expr: Expr): {
+/** Collect all cell/variable dependencies from an expression.
+ *  skipFixed: leave out references inside fixed(...) (held across chain steps). */
+function exprDeps(expr: Expr, opts?: { skipFixed?: boolean }): {
   cellRefs: CellAddress[];
   varRefs: string[];
   sheetRefs: SheetRef[];
@@ -79,6 +84,7 @@ function exprDeps(expr: Expr): {
         walk(e.operand);
         break;
       case "funcCall":
+        if (opts?.skipFixed && e.name === "fixed") break;
         e.args.forEach(walk);
         break;
       case "markov":
@@ -196,6 +202,44 @@ function isChainCell(cell: Cell): boolean {
   if (cell.content.kind !== "formula") return false;
   const expr = cell.content.expr;
   return (expr.type === "funcCall" && CHAIN_CONSTRUCTORS.has(expr.name)) || expr.type === "markov";
+}
+
+/** Explicit chain cell, or a formula lifted into a chain because it references one. */
+function isChainLike(cell: Cell): boolean {
+  return cell.chainBody !== undefined || isChainCell(cell);
+}
+
+function clearChainFields(cell: Cell): void {
+  cell.chainBody = undefined;
+  cell.chainInitial = undefined;
+  cell.chainCache = undefined;
+  cell.markovDef = undefined;
+  cell.markovStateCache = undefined;
+}
+
+/** Does the formula read a chain cell's value directly (as opposed to
+ *  indexing a step, taking a step range, searching it with ChainIndex, or
+ *  holding it with fixed)? Such formulas are lifted into derived chains.
+ *  Only same-sheet references count: chain bodies do not sync cross-sheet chains. */
+function hasDirectChainRef(expr: Expr, varMap: Map<string, CellAddress>, cells: Map<CellAddress, Cell>): boolean {
+  const isChainAddr = (addr: CellAddress | undefined) => {
+    const c = addr ? cells.get(addr) : undefined;
+    return !!c && isChainLike(c);
+  };
+  switch (expr.type) {
+    case "cellRef": return isChainAddr(toAddress(expr.col, expr.row));
+    case "varRef": return isChainAddr(varMap.get(expr.name));
+    case "binOp": return hasDirectChainRef(expr.left, varMap, cells) || hasDirectChainRef(expr.right, varMap, cells);
+    case "unaryMinus": return hasDirectChainRef(expr.operand, varMap, cells);
+    case "funcCall":
+      // ChainIndex maps its chain per step inside the condition itself, and
+      // its result is a scalar step number: never a derived chain
+      if (expr.name === "fixed" || expr.name === "resample" || expr.name === "chainindex") return false;
+      return expr.args.some((a) => hasDirectChainRef(a, varMap, cells));
+    case "chainStep": return hasDirectChainRef(expr.step, varMap, cells);
+    case "chainRange": return hasDirectChainRef(expr.start, varMap, cells) || hasDirectChainRef(expr.end, varMap, cells);
+    default: return false;
+  }
 }
 
 /** Get all direct dependencies of a cell as cell addresses (local only) */
@@ -877,8 +921,8 @@ function evaluateChainStep(
     return chainCell.chainCache[targetStep];
   }
 
-  // Collect body dependencies for auto-resample/auto-sync
-  const { cellRefs, varRefs } = exprDeps(chainCell.chainBody);
+  // Collect body dependencies for auto-resample/auto-sync (fixed() refs are held)
+  const { cellRefs, varRefs } = exprDeps(chainCell.chainBody, { skipFixed: true });
   const depAddrs: CellAddress[] = [];
   for (const ref of cellRefs) {
     if (ref === chainAddr) continue; // self-ref by address handled via shadow results
@@ -895,7 +939,7 @@ function evaluateChainStep(
   const resampleDeps: CellAddress[] = [];
   for (const addr of depAddrs) {
     const depCell = cells.get(addr);
-    if (depCell && isChainCell(depCell)) {
+    if (depCell && isChainLike(depCell)) {
       chainDeps.push({ addr, cell: depCell });
     } else {
       resampleDeps.push(addr);
@@ -909,9 +953,11 @@ function evaluateChainStep(
   }));
 
   for (let t = chainCell.chainCache.length; t <= targetStep; t++) {
-    // Save/restore chain step for nested chains
+    // Save/restore chain step and base results for nested chains
     const prevChainStep = _currentChainStep;
+    const prevBaseResults = _chainBaseResults;
     _currentChainStep = t;
+    _chainBaseResults = results;
 
     // Build shadow results with resampled deps and synced chains
     const shadowResults = new Map(results);
@@ -959,6 +1005,7 @@ function evaluateChainStep(
     }
 
     _currentChainStep = prevChainStep;
+    _chainBaseResults = prevBaseResults;
   }
 
   return chainCell.chainCache[targetStep];
@@ -1129,6 +1176,13 @@ function evalFunc(
       }
     }
     return resolveDirectRef(targetAddr, freshResults, cells);
+  }
+
+  // fixed(cell) — inside a chain step, read the cell's base (per-world) samples
+  // instead of the step's resampled ones; outside a chain it is the identity
+  if (name === "fixed") {
+    if (argExprs.length !== 1) throw new Error("fixed(cell) takes 1 argument");
+    return evalExpr(argExprs[0], _chainBaseResults ?? results, varMap, n, cells, ctx);
   }
 
   // Chain(body, initial) — define an iterative process
@@ -1563,7 +1617,13 @@ function evalCell(
   ctx?: CrossSheetCtx,
 ): void {
   if (!tempOnly) cell.error = undefined;
-  if (!tempOnly) _currentEvalCell = cell;
+  // Temporary evaluations (resample, chain-step redraws) must not attach
+  // chain state to any cell, so the current cell is null for them
+  const prevEvalCell = _currentEvalCell;
+  _currentEvalCell = tempOnly ? null : cell;
+  // Explicit chains re-attach their state when evaluated; anything else
+  // starts clean and is lifted below if it reads a chain directly
+  if (!tempOnly && !isChainCell(cell)) clearChainFields(cell);
   let result: CellResult | undefined;
   try {
     switch (cell.content.kind) {
@@ -1588,6 +1648,12 @@ function evalCell(
           _inlineSampleCapture = [];
         }
         result = evalExpr(cell.content.expr, results, varMap, numSamples, cells, ctx);
+        // Implicit lifting: a formula that reads a chain becomes a derived chain
+        // whose step t is the formula at step t of every chain it reads
+        if (!tempOnly && !isChainCell(cell) && hasDirectChainRef(cell.content.expr, varMap, cells)) {
+          cell.chainBody = cell.content.expr;
+          cell.chainInitial = result;
+        }
         if (!tempOnly && _inlineSampleCapture && _inlineSampleCapture.length > 0) {
           cell.inlineSamples = _inlineSampleCapture;
         } else if (!tempOnly) {
@@ -1602,10 +1668,8 @@ function evalCell(
     result = undefined;
     _inlineSampleCapture = null;
   }
-  if (!tempOnly) {
-    cell.result = result;
-    _currentEvalCell = null;
-  }
+  if (!tempOnly) cell.result = result;
+  _currentEvalCell = prevEvalCell;
   if (result) {
     results.set(addr, result);
   } else {
