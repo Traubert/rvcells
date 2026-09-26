@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
-import type { Cell, Sheet, WorkbookSettings } from "../engine/types";
+import type { Cell, CellFormat, Sheet, WorkbookSettings } from "../engine/types";
 import {
   summarize,
   histogram,
@@ -17,7 +17,7 @@ import {
 } from "../engine/evaluate";
 import type { MergeCandidate } from "../engine/evaluate";
 import type { SensitivityInput } from "../engine/evaluate";
-import { formatNumber } from "../format";
+import { formatValue } from "../format";
 import { mulberry32 } from "../random";
 import { DEFAULT_NUM_HISTOGRAM_BINS } from "../constants";
 
@@ -564,40 +564,40 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
         <div className="detail-body">
           <table className="detail-stats">
             <tbody>
-              <tr><td>Mean</td><td>{formatNumber(stats.mean)}</td></tr>
-              <tr><td>Std Dev</td><td>{formatNumber(stats.std)}</td></tr>
-              <tr><td>P1</td><td>{formatNumber(stats.p1)}</td></tr>
-              <tr><td>P5</td><td>{formatNumber(stats.p5)}</td></tr>
-              <tr><td>P10</td><td>{formatNumber(stats.p10)}</td></tr>
-              <tr><td>P25</td><td>{formatNumber(stats.p25)}</td></tr>
-              <tr><td>P50</td><td>{formatNumber(stats.p50)}</td></tr>
-              <tr><td>P75</td><td>{formatNumber(stats.p75)}</td></tr>
-              <tr><td>P90</td><td>{formatNumber(stats.p90)}</td></tr>
-              <tr><td>P95</td><td>{formatNumber(stats.p95)}</td></tr>
-              <tr><td>P99</td><td>{formatNumber(stats.p99)}</td></tr>
+              <tr><td>Mean</td><td>{formatValue(stats.mean, cell.format)}</td></tr>
+              <tr><td>Std Dev</td><td>{formatValue(stats.std, cell.format)}</td></tr>
+              <tr><td>P1</td><td>{formatValue(stats.p1, cell.format)}</td></tr>
+              <tr><td>P5</td><td>{formatValue(stats.p5, cell.format)}</td></tr>
+              <tr><td>P10</td><td>{formatValue(stats.p10, cell.format)}</td></tr>
+              <tr><td>P25</td><td>{formatValue(stats.p25, cell.format)}</td></tr>
+              <tr><td>P50</td><td>{formatValue(stats.p50, cell.format)}</td></tr>
+              <tr><td>P75</td><td>{formatValue(stats.p75, cell.format)}</td></tr>
+              <tr><td>P90</td><td>{formatValue(stats.p90, cell.format)}</td></tr>
+              <tr><td>P95</td><td>{formatValue(stats.p95, cell.format)}</td></tr>
+              <tr><td>P99</td><td>{formatValue(stats.p99, cell.format)}</td></tr>
             </tbody>
           </table>
 
           {compareStats && (
             <table className="detail-stats compare-stats">
               <tbody>
-                <tr><td>Mean</td><td>{formatNumber(compareStats.mean)}</td></tr>
-                <tr><td>Std Dev</td><td>{formatNumber(compareStats.std)}</td></tr>
-                <tr><td>P1</td><td>{formatNumber(compareStats.p1)}</td></tr>
-                <tr><td>P5</td><td>{formatNumber(compareStats.p5)}</td></tr>
-                <tr><td>P10</td><td>{formatNumber(compareStats.p10)}</td></tr>
-                <tr><td>P25</td><td>{formatNumber(compareStats.p25)}</td></tr>
-                <tr><td>P50</td><td>{formatNumber(compareStats.p50)}</td></tr>
-                <tr><td>P75</td><td>{formatNumber(compareStats.p75)}</td></tr>
-                <tr><td>P90</td><td>{formatNumber(compareStats.p90)}</td></tr>
-                <tr><td>P95</td><td>{formatNumber(compareStats.p95)}</td></tr>
-                <tr><td>P99</td><td>{formatNumber(compareStats.p99)}</td></tr>
+                <tr><td>Mean</td><td>{formatValue(compareStats.mean, compareResolved?.cell.format)}</td></tr>
+                <tr><td>Std Dev</td><td>{formatValue(compareStats.std, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P1</td><td>{formatValue(compareStats.p1, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P5</td><td>{formatValue(compareStats.p5, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P10</td><td>{formatValue(compareStats.p10, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P25</td><td>{formatValue(compareStats.p25, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P50</td><td>{formatValue(compareStats.p50, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P75</td><td>{formatValue(compareStats.p75, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P90</td><td>{formatValue(compareStats.p90, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P95</td><td>{formatValue(compareStats.p95, compareResolved?.cell.format)}</td></tr>
+                <tr><td>P99</td><td>{formatValue(compareStats.p99, compareResolved?.cell.format)}</td></tr>
               </tbody>
             </table>
           )}
 
           <div ref={histChartRef} className="detail-chart">
-            <Histogram hist={hist} maxBin={maxBin} stats={stats} guideMode={guideMode} compareHist={compareHist} result={result} />
+            <Histogram hist={hist} format={cell.format} maxBin={maxBin} stats={stats} guideMode={guideMode} compareHist={compareHist} result={result} />
           </div>
 
           <div className="detail-controls">
@@ -765,6 +765,7 @@ export function DetailPanel({ addr, cell, allSheets, sheetIndex, settings, locke
           sheetIndex={sheetIndex}
           addr={addr}
           outputResult={result}
+          format={cell.format}
           settings={settings}
           stopSet={stopSet}
           mergeHistory={mergeHistory}
@@ -1011,7 +1012,7 @@ function SensitivityView({ outputResult, allSheets, sheetIndex, addr, stopSet, m
 
 // ─── Tornado view (±1σ one-at-a-time) ──────────────────────────────
 
-function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stopSet, mergeHistory, onMerge, onExpand }: { allSheets: Sheet[]; sheetIndex: number; addr: string; outputResult: import("../engine/types").CellResult; settings: WorkbookSettings; stopSet: Set<string>; mergeHistory: Map<string, string[]>; onMerge: (c: MergeCandidate) => void; onExpand: (ga: string) => void }) {
+function TornadoView({ allSheets, sheetIndex, addr, outputResult, format, settings, stopSet, mergeHistory, onMerge, onExpand }: { allSheets: Sheet[]; sheetIndex: number; addr: string; outputResult: import("../engine/types").CellResult; format?: CellFormat; settings: WorkbookSettings; stopSet: Set<string>; mergeHistory: Map<string, string[]>; onMerge: (c: MergeCandidate) => void; onExpand: (ga: string) => void }) {
   const bars = useMemo(
     () => computeTornado(addr, sheetIndex, allSheets, settings, stopSet),
     [addr, sheetIndex, allSheets, outputResult, settings, stopSet]
@@ -1128,20 +1129,20 @@ function TornadoView({ allSheets, sheetIndex, addr, outputResult, settings, stop
                             className="tornado-bar-label tornado-bar-label-left"
                             style={{ left: `${barLeftPct}%`, width: `${barTotalWidthPct / 2}%` }}
                           >
-                            {formatNumber(leftDelta)}
+                            {formatValue(leftDelta, format)}
                           </span>
                           <span
                             className="tornado-bar-label tornado-bar-label-right"
                             style={{ left: `${barLeftPct + barTotalWidthPct / 2}%`, width: `${barTotalWidthPct / 2}%` }}
                           >
-                            +{formatNumber(rightDelta)}
+                            +{formatValue(rightDelta, format)}
                           </span>
                         </>
                       )}
                     </div>
                   </td>
                   <td className="tornado-value">
-                    {formatNumber(Math.abs(b.outputAtHigh - b.outputAtLow))}
+                    {formatValue(Math.abs(b.outputAtHigh - b.outputAtLow), format)}
                   </td>
                 </tr>
               );
@@ -1471,13 +1472,14 @@ function getGuideLines(mode: GuideMode, stats: { mean: number; std: number; p5: 
   return [];
 }
 
-function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
+function Histogram({ hist, maxBin, stats, guideMode, compareHist, result, format }: {
   hist: { min: number; max: number; bins: number[]; binWidth: number };
   maxBin: number;
   stats: { mean: number; std: number; p5: number; p25: number; p50: number; p75: number; p95: number };
   guideMode: GuideMode;
   compareHist?: { min: number; max: number; bins: number[]; binWidth: number } | null;
   result: import("../engine/types").CellResult;
+  format?: CellFormat;
 }) {
   const [hoverBin, setHoverBin] = useState<number | null>(null);
   const [hoverXPct, setHoverXPct] = useState<number | null>(null);
@@ -1566,7 +1568,7 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
           if (pct < 0 || pct > 100) return null;
           return (
             <div key={label} className="hist-guideline" style={{ left: `${pct}%` }}>
-              <span className="hist-guideline-value">{formatNumber(value)}</span>
+              <span className="hist-guideline-value">{formatValue(value, format)}</span>
               <span className="hist-guideline-label">{label}</span>
             </div>
           );
@@ -1608,18 +1610,18 @@ function Histogram({ hist, maxBin, stats, guideMode, compareHist, result }: {
           });
           return ticks.map(({ pct, value }) => (
             <span key={pct} className="hist-tick" style={{ left: `${pct}%` }}>
-              {formatNumber(value)}
+              {formatValue(value, format)}
             </span>
           ));
         })()}
         {hoverInfo && (
           <span className="hist-hover-info">
-            <span className="hist-hover-cum">≤{formatNumber(hoverInfo.lo)}: {hoverInfo.belowPct.toFixed(1)}% </span>
-            {formatNumber(hoverInfo.lo)}–{formatNumber(hoverInfo.hi)}: {hoverInfo.pct.toFixed(1)}%
+            <span className="hist-hover-cum">≤{formatValue(hoverInfo.lo, format)}: {hoverInfo.belowPct.toFixed(1)}% </span>
+            {formatValue(hoverInfo.lo, format)}–{formatValue(hoverInfo.hi, format)}: {hoverInfo.pct.toFixed(1)}%
             {hoverInfo.comparePct !== null && (
               <span className="hist-hover-compare"> / {hoverInfo.comparePct.toFixed(1)}%</span>
             )}
-            <span className="hist-hover-cum"> ≥{formatNumber(hoverInfo.hi)}: {hoverInfo.abovePct.toFixed(1)}%</span>
+            <span className="hist-hover-cum"> ≥{formatValue(hoverInfo.hi, format)}: {hoverInfo.abovePct.toFixed(1)}%</span>
           </span>
         )}
       </div>
@@ -2018,7 +2020,7 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
         )}
         {hoveredStats && (
           <span className="timeline-hover-stats">
-            Step {hoveredStats.step}: median {formatNumber(hoveredStats.p50)}, P5–P95: {formatNumber(hoveredStats.p5)}–{formatNumber(hoveredStats.p95)}
+            Step {hoveredStats.step}: median {formatValue(hoveredStats.p50, cell.format)}, P5–P95: {formatValue(hoveredStats.p5, cell.format)}–{formatValue(hoveredStats.p95, cell.format)}
           </span>
         )}
       </div>
@@ -2028,7 +2030,7 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
             <div className="timeline-yaxis">
               {yGridLines.map(v => (
                 <span key={v} className="timeline-ylabel" style={{ bottom: `${((v - yMin) / yRange) * 100}%` }}>
-                  {formatNumber(v)}
+                  {formatValue(v, cell.format)}
                 </span>
               ))}
             </div>
@@ -2107,7 +2109,7 @@ function TimelineView({ cell, addr, allSheets, sheetIndex, settings, compareCell
                       <span className="timeline-pct-at-cursor">{interpolatePct(hoverY, hoveredStats)}</span>
                     )}
                     <br />
-                    {hoverY !== null ? formatNumber(hoverY) : ""}
+                    {hoverY !== null ? formatValue(hoverY, cell.format) : ""}
                   </span>
                   {cmpHoveredStats && hoverY !== null && (
                     <span

@@ -57,9 +57,12 @@ export function formatNumber(n: number, sigFigs = 3): string {
 // A format string is a template containing one placeholder:
 //   {}    the number, formatted to the cell's significant figures
 //   {%}   the number ×100 with a % sign (0.5 → "50%")
-//   {.n}  fixed n decimals when the last significant digit lands in the
-//         decimals, integer display otherwise (money: {.2} shows 10.2 as
-//         "10.20" but 100.2 at 3 sig figs as "100")
+//   {.n}  at most n decimals: fixed n decimals when the last significant
+//         digit lands in the decimals, integer display otherwise (money:
+//         {.2} shows 10.2 as "10.20" but 100.2 at 3 sig figs as "100").
+//         Values below the last decimal show as 0 — never as SI-small
+//         suffixes (0.0001 → "0.00", not "100μ"). Large values keep the
+//         SI-large suffixes because those come from sig figs, not decimals.
 // Everything around the placeholder is literal text ("{.2} €/kk").
 
 export type PlaceholderSpec =
@@ -96,18 +99,19 @@ export function formatNumberSpec(n: number, spec: PlaceholderSpec, sigFigs = 3):
     case "fixed": {
       if (!isFinite(n)) return String(n);
       if (n === 0) return (0).toFixed(spec.decimals);
-      const abs = Math.abs(n);
-      // SI-suffix territory: fixed decimals don't apply to the scaled mantissa
-      if (abs >= 1e6 || abs < 1e-3) return formatNumber(n, sigFigs);
+      // SI-large territory: fixed decimals don't apply to the scaled mantissa
+      if (Math.abs(n) >= 1e6) return formatNumber(n, sigFigs);
       const rounded = Number(n.toPrecision(sigFigs));
       // Exponent of the least significant digit after sig-fig rounding:
       // negative means decimals survived → pad/cap to fixed decimals
       const lsdExp = Math.floor(Math.log10(Math.abs(rounded))) - (sigFigs - 1);
       if (lsdExp < 0) {
-        return rounded.toLocaleString(undefined, {
+        const out = rounded.toLocaleString(undefined, {
           minimumFractionDigits: spec.decimals,
           maximumFractionDigits: spec.decimals,
         });
+        // A value below the last decimal rounds to zero: drop the sign
+        return out.replace(/^-(?=[0.,]*$)/, "");
       }
       return formatNumber(n, sigFigs);
     }

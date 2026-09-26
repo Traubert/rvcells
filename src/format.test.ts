@@ -53,7 +53,17 @@ describe("formatValue", () => {
     expect(formatValue(0, eur)).toBe("0.00 €");
   });
 
-  it("fixed decimals leave SI-suffix territory alone", () => {
+  it("fixed decimals cap resolution: tiny values show as zero, not SI-small", () => {
+    const eur = { formatString: "{.2} €" };
+    expect(formatValue(0.001, eur)).toBe("0.00 €");
+    expect(formatValue(0.0001, eur)).toBe("0.00 €");
+    expect(formatValue(-0.0001, eur)).toBe("0.00 €");
+    expect(formatValue(0.004, eur)).toBe("0.00 €");
+    expect(formatValue(0.006, eur)).toBe("0.01 €");
+    expect(formatValue(0.0001, { formatString: "{.3}" })).toBe("0.000");
+  });
+
+  it("fixed decimals leave SI-large territory alone", () => {
     expect(formatValue(1234567, { formatString: "{.2} €" })).toBe("1.23M €");
   });
 
