@@ -231,6 +231,9 @@ function parseDistribution(s: string): Distribution | null {
       if (args.length === 0) return { type: "Poisson", lambda: 1 };
       if (args.length === 1) return { type: "Poisson", lambda: args[0] };
       break;
+    case "Binomial":
+      if (args.length === 2) return { type: "Binomial", n: args[0], p: args[1] };
+      break;
     case "StudentT":
       if (args.length === 1) return { type: "StudentT", nu: args[0], mu: 0, sigma: 1 };
       if (args.length === 3) return { type: "StudentT", nu: args[0], mu: args[1], sigma: args[2] };

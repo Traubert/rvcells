@@ -37,6 +37,7 @@ const PAGES = [
               <tr><td><code>Pareto(xMin, alpha)</code></td><td>Heavy-tailed power law</td></tr>
               <tr><td><code>Poisson(lambda)</code></td><td>Count of events per interval</td></tr>
               <tr className="help-subrow"><td><code>Poisson()</code></td><td>Poisson with rate 1</td></tr>
+              <tr><td><code>Binomial(n, p)</code></td><td>Successes in n trials; n may be a distribution (per-sample trial counts)</td></tr>
               <tr><td><code>Bernoulli(p)</code></td><td>Single trial: 1 with probability p, else 0</td></tr>
               <tr className="help-subrow"><td><code>Bernoulli()</code></td><td>Fair coin (p&nbsp;= 0.5)</td></tr>
               <tr><td><code>StudentT(nu)</code></td><td>Heavy-tailed symmetric</td></tr>
@@ -75,6 +76,8 @@ const PAGES = [
               <tr><td><code>if(cond, then, else)</code></td><td>Nonzero <em>cond</em> picks <em>then</em>, zero picks <em>else</em></td></tr>
               <tr><td><code>Bernoulli(p)</code></td><td>Samples 0 or 1 with probability p</td></tr>
               <tr><td><code>Discrete(p1, p2, ...)</code></td><td>Samples from &#123;0, 1, ...&#125; with given weights</td></tr>
+              <tr><td><code>RankMap(y, x)</code></td><td>x&apos;s values rearranged into y&apos;s rank order (keeps x&apos;s distribution, borrows y&apos;s dependence)</td></tr>
+              <tr><td><code>NormalScore(x)</code></td><td>Each sample&apos;s rank mapped to a standard normal quantile</td></tr>
             </tbody>
           </table>
           <p className="help-note"><code>if()</code> and comparison operators (<code>&gt;</code>, <code>&lt;</code>, <code>==</code>, ...) work elementwise: each sample is decided independently. So <code>if(Bernoulli(0.3), x, y)</code> picks <code>x</code> for ~30% of samples and <code>y</code> for the rest.</p>
@@ -111,8 +114,11 @@ const PAGES = [
               <tr><td><code>resample(cell)</code></td><td>Fresh independent draw from the same process</td></tr>
               <tr><td><code>_self</code></td><td>Previous step&apos;s value inside a Chain body</td></tr>
               <tr><td><code>_t</code></td><td>Current step number inside a Chain body</td></tr>
+              <tr><td><code>StickyRedraw(dist, p)</code></td><td>Each step keeps the previous value with probability p, otherwise redraws from <em>dist</em>. Marginal stays <em>dist</em>; lag-1 autocorrelation is p</td></tr>
+              <tr><td><code>AutoRegression(dist, phi)</code></td><td>Stationary process whose every step is distributed as <em>dist</em>, with lag-1 autocorrelation phi (−1&nbsp;&lt;&nbsp;phi&nbsp;&lt;&nbsp;1). <em>dist</em> is a constructor or a cell holding one</td></tr>
             </tbody>
           </table>
+          <p className="help-note"><code>AutoRegression()</code> picks the construction by family: Normal is a Gaussian AR(1); LogNormal runs the AR(1) on the log (phi applies to logs); Poisson is INAR(1) via binomial thinning, so counts stay integers; Bernoulli and Discrete use sticky redraw; anything else (Beta, Uniform, Triangular, Pareto, StudentT) uses a Gaussian copula, so phi is a rank correlation. Both are Chains: <code>x[n]</code>, ChainIndex and the Timeline tab all work.</p>
           <p className="help-note"><code>Chain()</code> auto-resamples referenced distributions each step. Referenced chains auto-sync to the same step.</p>
           <p className="help-note"><code>ChainIndex(chain, cond)</code> searches for the first step where a condition holds. The condition is evaluated at each step with the chain mapped to that step&apos;s distribution, and must reduce it to a scalar using <code>mean()</code>, <code>P()</code>, <code>min()</code>, etc.:</p>
           <table className="help-table">

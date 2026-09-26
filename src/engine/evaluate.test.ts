@@ -31,6 +31,36 @@ function std(sheet: Sheet, addr: string): number {
   return summarize(cell.result).std;
 }
 
+/** Helper: a cell's sample array */
+function values(sheet: Sheet, addr: string): Float64Array {
+  const cell = sheet.cells.get(addr);
+  if (!cell?.result || cell.result.kind !== "samples") throw new Error(`${addr} is not a sample array`);
+  return cell.result.values;
+}
+
+/** Helper: Pearson correlation of two equal-length arrays */
+function pearson(a: Float64Array, b: Float64Array): number {
+  const n = a.length;
+  let ma = 0, mb = 0;
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+  ma /= n; mb /= n;
+  let sab = 0, saa = 0, sbb = 0;
+  for (let i = 0; i < n; i++) {
+    sab += (a[i] - ma) * (b[i] - mb);
+    saa += (a[i] - ma) ** 2;
+    sbb += (b[i] - mb) ** 2;
+  }
+  return sab / Math.sqrt(saa * sbb);
+}
+
+/** Helper: steps t-1 and t of a chain cell from the same trajectory (the
+ *  cache is cleared on every recalc, so read both from one evaluation) */
+function chainSteps(sheet: Sheet, addr: string, t: number): [Float64Array, Float64Array] {
+  const cache = sheet.cells.get(addr)?.chainCache;
+  if (!cache || cache.length <= t) throw new Error(`${addr} has not been stepped to ${t}`);
+  return [cache[t - 1], cache[t]];
+}
+
 /** Helper: check if a cell's result is scalar */
 function isScalar(sheet: Sheet, addr: string): boolean {
   return sheet.cells.get(addr)?.result?.kind === "scalar";
@@ -1086,6 +1116,154 @@ describe("Chain", () => {
   it("non-chain variable self-reference is a cycle error", () => {
     const sheet = makeSheet({ A1: "x = x + 1" });
     expect(sheet.cells.get("A1")!.error).toBeDefined();
+  });
+});
+
+describe("Binomial", () => {
+  it("scalar trials: mean n·p, integer values in [0, n]", () => {
+    const sheet = makeSheet({ A1: "Binomial(20, 0.3)", B1: "= Binomial(200, 0.5)" }, 4000);
+    expect(mean(sheet, "A1")).toBeCloseTo(6, 0);
+    expect(mean(sheet, "B1")).toBeCloseTo(100, -1);
+    for (const v of values(sheet, "A1")) {
+      expect(Number.isInteger(v)).toBe(true);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it("many trials with a rare outcome: exact-ish inversion, not a normal approximation", () => {
+    const sheet = makeSheet({
+      A1: "= Binomial(1000, 0.001)",   // mean 1: normal approx would be badly wrong
+      B1: "= Binomial(1000, 0.999)",   // mirror: mean 999
+      C1: "= Binomial(100000, 0.5)",   // normal-approx regime
+    }, 8000);
+    expect(mean(sheet, "A1")).toBeCloseTo(1, 1);
+    expect(std(sheet, "A1")).toBeCloseTo(1, 0);
+    // P(X = 0) = 0.999^1000 ≈ 0.368: a normal approximation rounds far fewer to 0
+    const zeros = values(sheet, "A1").filter(v => v === 0).length / 8000;
+    expect(zeros).toBeCloseTo(0.368, 1);
+    expect(mean(sheet, "B1")).toBeCloseTo(999, 0);
+    expect(mean(sheet, "C1")).toBeCloseTo(50000, -2);
+    expect(std(sheet, "C1")).toBeCloseTo(158, -1);
+  });
+
+  it("elementwise trials: thinning a sample array", () => {
+    const sheet = makeSheet({ A1: "= Poisson(10)", B1: "= Binomial(A1, 0.5)" }, 4000);
+    expect(mean(sheet, "B1")).toBeCloseTo(5, 0);
+    const a = values(sheet, "A1"), b = values(sheet, "B1");
+    for (let i = 0; i < a.length; i++) expect(b[i]).toBeLessThanOrEqual(a[i]);
+  });
+});
+
+describe("StickyRedraw", () => {
+  it("keeps the marginal and gives lag-1 autocorrelation p", () => {
+    const sheet = makeSheet({
+      A1: "x = StickyRedraw(Beta(1, 20), 70%)",
+      B1: "= x[5]",
+    }, 8000);
+    expect(sheet.cells.get("A1")!.error).toBeUndefined();
+    expect(mean(sheet, "B1")).toBeCloseTo(1 / 21, 2);
+    const [prev, cur] = chainSteps(sheet, "A1", 5);
+    expect(pearson(prev, cur)).toBeCloseTo(0.7, 1);
+  });
+
+  it("p = 1 holds forever, p = 0 is a fresh draw each step", () => {
+    const hold = makeSheet({ A1: "hold = StickyRedraw(Uniform(), 1)", B1: "= hold[3]" }, 2000);
+    const [h2, h3] = chainSteps(hold, "A1", 3);
+    expect(pearson(h2, h3)).toBeCloseTo(1, 6);
+    const fresh = makeSheet({ A1: "fresh = StickyRedraw(Uniform(), 0)", B1: "= fresh[3]" }, 2000);
+    const [f2, f3] = chainSteps(fresh, "A1", 3);
+    expect(Math.abs(pearson(f2, f3))).toBeLessThan(0.1);
+  });
+
+  it("rejects a hold probability outside [0, 1]", () => {
+    const sheet = makeSheet({ A1: "= StickyRedraw(Uniform(), 1.5)" });
+    expect(sheet.cells.get("A1")!.error).toContain("[0, 1]");
+  });
+});
+
+describe("AutoRegression", () => {
+  it("Normal: exact marginal and lag-1 autocorrelation phi", () => {
+    const sheet = makeSheet({ A1: "x = AutoRegression(Normal(100, 10), 0.8)", B1: "= x[10]" }, 8000);
+    expect(mean(sheet, "B1")).toBeCloseTo(100, 0);
+    expect(std(sheet, "B1")).toBeCloseTo(10, 0);
+    const [prev, cur] = chainSteps(sheet, "A1", 10);
+    expect(pearson(prev, cur)).toBeCloseTo(0.8, 1);
+  });
+
+  it("Normal with percent CV and a negative phi", () => {
+    const sheet = makeSheet({ A1: "x = AutoRegression(Normal(50, 10%), -0.5)", B1: "= x[6]" }, 8000);
+    expect(std(sheet, "B1")).toBeCloseTo(5, 0);
+    const [prev, cur] = chainSteps(sheet, "A1", 6);
+    expect(pearson(prev, cur)).toBeCloseTo(-0.5, 1);
+  });
+
+  it("LogNormal: positive, keeps the arithmetic mean, correlated on the log scale", () => {
+    const sheet = makeSheet({ A1: "x = AutoRegression(LogNormal(100, 30%), 0.9)", B1: "= x[10]" }, 8000);
+    expect(mean(sheet, "B1")).toBeCloseTo(100, -1);
+    for (const v of values(sheet, "B1")) expect(v).toBeGreaterThan(0);
+    const [prev, cur] = chainSteps(sheet, "A1", 10);
+    expect(pearson(prev.map(Math.log), cur.map(Math.log))).toBeCloseTo(0.9, 1);
+  });
+
+  it("Poisson: INAR(1) keeps integer counts and the Poisson mean", () => {
+    const sheet = makeSheet({ A1: "x = AutoRegression(Poisson(4), 0.6)", B1: "= x[10]" }, 8000);
+    for (const v of values(sheet, "B1")) expect(Number.isInteger(v) && v >= 0).toBe(true);
+    expect(mean(sheet, "B1")).toBeCloseTo(4, 0);
+    expect(std(sheet, "B1")).toBeCloseTo(2, 0);
+    const [prev, cur] = chainSteps(sheet, "A1", 10);
+    expect(pearson(prev, cur)).toBeCloseTo(0.6, 1);
+  });
+
+  it("Poisson rejects a negative phi", () => {
+    const sheet = makeSheet({ A1: "= AutoRegression(Poisson(4), -0.2)" });
+    expect(sheet.cells.get("A1")!.error).toContain("[0, 1)");
+  });
+
+  it("Bernoulli: sticky redraw keeps the probability", () => {
+    const sheet = makeSheet({ A1: "x = AutoRegression(Bernoulli(0.3), 0.8)", B1: "= x[10]" }, 8000);
+    expect(mean(sheet, "B1")).toBeCloseTo(0.3, 1);
+    const [prev, cur] = chainSteps(sheet, "A1", 10);
+    expect(pearson(prev, cur)).toBeCloseTo(0.8, 1);
+  });
+
+  it("Beta: Gaussian copula keeps the marginal with rank correlation phi", () => {
+    const sheet = makeSheet({ A1: "x = AutoRegression(Beta(1, 20), 0.8)", B1: "= x[10]" }, 8000);
+    for (const v of values(sheet, "B1")) expect(v >= 0 && v <= 1).toBe(true);
+    expect(mean(sheet, "B1")).toBeCloseTo(1 / 21, 2);
+    // Beta(1,20) has std ≈ 0.0454; the copula must not shrink it like linear smoothing would
+    expect(std(sheet, "B1")).toBeCloseTo(0.0454, 2);
+    const [prev, cur] = chainSteps(sheet, "A1", 10);
+    expect(spearmanCorrelation(prev, cur)).toBeCloseTo(0.8, 1);
+  });
+
+  it("accepts a reference to a cell holding a distribution literal", () => {
+    const sheet = makeSheet({
+      A1: "Normal(10, 2)",
+      A2: "x = AutoRegression(A1, 0.5)",
+      B1: "= x[6]",
+    }, 8000);
+    expect(sheet.cells.get("A2")!.error).toBeUndefined();
+    expect(std(sheet, "B1")).toBeCloseTo(2, 0);
+    const [prev, cur] = chainSteps(sheet, "A2", 6);
+    expect(pearson(prev, cur)).toBeCloseTo(0.5, 1);
+  });
+
+  it("rejects non-distribution arguments and out-of-range phi", () => {
+    const s1 = makeSheet({ A1: "= AutoRegression(A2 * 2, 0.5)", A2: "3" });
+    expect(s1.cells.get("A1")!.error).toContain("distribution constructor");
+    const s2 = makeSheet({ A1: "= AutoRegression(Normal(), 1)" });
+    expect(s2.cells.get("A1")!.error).toContain("between -1 and 1");
+  });
+
+  it("is a chain: bracket ranges and ChainIndex work on it", () => {
+    const sheet = makeSheet({
+      A1: "x = AutoRegression(Normal(0, 1), 0.5)",
+      B1: "= mean(x[0:5])",
+      C1: "= ChainIndex(x, mean(x) > -1)",
+    }, 1000);
+    expect(sheet.cells.get("B1")!.result?.kind).toBe("samples");
+    expect(scalarValue(sheet, "C1")).toBe(0);
   });
 });
 

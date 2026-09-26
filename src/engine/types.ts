@@ -12,6 +12,7 @@ export type Distribution =
   | { type: "Beta"; alpha: number; beta: number }
   | { type: "Pareto"; xMin: number; alpha: number }
   | { type: "Poisson"; lambda: number }
+  | { type: "Binomial"; n: number; p: number }
   | { type: "StudentT"; nu: number; mu: number; sigma: number };
 
 /** AST node types for parsed formulas */

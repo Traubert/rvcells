@@ -90,6 +90,14 @@ describe("parseCell", () => {
       });
     });
 
+    it("parses Binomial", () => {
+      expect(parseCell("Binomial(10, 0.3)").content).toEqual({
+        kind: "distribution",
+        dist: { type: "Binomial", n: 10, p: 0.3 },
+      });
+      expect(parseCell("Binomial(10)").content.kind).toBe("text");
+    });
+
     it("parses StudentT with 1 arg", () => {
       const { content } = parseCell("StudentT(3)");
       expect(content).toEqual({

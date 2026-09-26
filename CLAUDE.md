@@ -59,7 +59,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 ### P0 — core loop
 - [x] Editable grid (26 columns × 50 rows)
 - [x] Cell editing: type a number, a distribution spec, or a formula
-- [x] Distribution types: Normal, LogNormal, Uniform, Triangular, Beta, Pareto, Poisson, StudentT
+- [x] Distribution types: Normal, LogNormal, Uniform, Triangular, Beta, Pareto, Poisson, Binomial, StudentT
+  - `Binomial(n, p)` accepts a sample array for `n` in formulas (per-sample trial counts; binomial thinning for INAR)
   - Argless forms with sensible defaults: `Normal()` = N(0,1), `LogNormal()` = exp(Z), `Uniform()` = U(0,1), `Triangular()` = symmetric on [0,1], `Poisson()` = Poisson(1), `Bernoulli()` = fair coin
   - Percent literals: `10%` is a numeric literal meaning 0.1 everywhere (cell values, `name = 7%`, formulas, any function argument). The one contextual reading is a *bare* percent literal in the spread slot of Normal/LogNormal/`±`, which means CV; a computed spread like `10% * 1` is a plain 0.1
   - Percent CV syntax for Normal and LogNormal: `Normal(100, 10%)` → std = 10; `LogNormal(100, 10%)` interprets first arg as arithmetic mean, second as arithmetic CV (σ_log = √log(1+cv²), μ_log = log(mean) − σ_log²/2). LogNormal arithmetic mean must be > 0
@@ -94,6 +95,8 @@ Each cell shows a compact summary: the value for scalars, mean ± std for distri
 - [x] Chain(body, init): iterative process with lazy evaluation, auto-resample, cross-chain sync
 - [x] chain[step] bracket syntax: access distribution at a specific chain step
 - [x] ChainIndex(chain, condition): search for first step where condition is true (e.g. `mean(x) > 100`)
+- [x] `StickyRedraw(dist, p)`: chain sugar for `Chain(if(Bernoulli(p), _self, dist), dist)` — keeps the marginal, lag-1 autocorrelation p
+- [x] `AutoRegression(dist, phi)`: stationary chain with marginal `dist` and lag-1 autocorrelation phi; construction dispatched on family — Normal: Gaussian AR(1); LogNormal: AR(1) on logs; Poisson: INAR(1) (`Binomial(_self, phi) + Poisson(λ(1−phi))`); Bernoulli/Discrete: sticky redraw; others: Gaussian copula (`RankMap(phi·NormalScore(_self) + √(1−phi²)·Normal(), dist)`, phi is a rank correlation). `dist` is an inline constructor or a reference to a cell holding a distribution literal (converted to a constructor at compile time). `RankMap(y, x)` and `NormalScore(x)` are exposed as ordinary functions
 - [x] `_t` and `_self` contextual variables inside Chain/Markov bodies (current step number; previous step's value — lets an unnamed cell reference itself, and is what compiled Markov bodies switch on, so Markov needs no variable name either)
 - [x] Markov(states; init): transition diagram syntax compiling to Chain/Discrete/if
   - State names reference emission distributions (variables, cell refs, or cross-sheet refs)

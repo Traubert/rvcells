@@ -19,10 +19,14 @@ export const ID_START_SRC = "[\\p{L}_]";
 export const ID_CONT_SRC = "[\\p{L}\\p{N}_]";
 
 /** Distribution names that can be entered directly into a cell without "=" (original casing). */
-export const DISTRIBUTION_NAMES = new Set(["Normal", "LogNormal", "Uniform", "Triangular", "Beta", "Pareto", "Poisson", "StudentT"]);
+export const DISTRIBUTION_NAMES = new Set(["Normal", "LogNormal", "Uniform", "Triangular", "Beta", "Pareto", "Poisson", "Binomial", "StudentT"]);
 
 /** All sample-producing constructor function names (lowercase, for evalFunc matching).
  *  Keep in sync with the cases in evalFunc. */
 export const SAMPLE_CONSTRUCTORS = new Set([
-  "normal", "lognormal", "uniform", "triangular", "beta", "pareto", "poisson", "studentt", "bernoulli", "discrete",
+  "normal", "lognormal", "uniform", "triangular", "beta", "pareto", "poisson", "binomial", "studentt", "bernoulli", "discrete",
 ]);
+
+/** Chain-defining constructor names (lowercase). A cell whose top-level
+ *  formula is one of these is a chain cell (Markov is its own AST node). */
+export const CHAIN_CONSTRUCTORS = new Set(["chain", "stickyredraw", "autoregression"]);

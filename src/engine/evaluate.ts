@@ -1,10 +1,10 @@
-import type { Cell, CellAddress, CellFormat, CellResult, Expr, MarkovInit, MarkovStateDef, Sheet, WorkbookSettings } from "./types";
+import type { Cell, CellAddress, CellFormat, CellResult, Distribution, Expr, MarkovInit, MarkovStateDef, Sheet, WorkbookSettings } from "./types";
 import { toAddress, parseAddress } from "./types";
-import { sample } from "./distributions";
+import { sample, sampleBinomial, normalQuantile } from "./distributions";
 import { parseCell } from "./parser";
 import { splitFormulaText } from "./fill";
 import { sampleMean, sampleMeanBy, sampleMeanVar } from "./stats";
-import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, DEFAULT_CHAIN_SEARCH_LIMIT, SAMPLE_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
+import { DEFAULT_SHEET_NAME, DEFAULT_NUM_SAMPLES, DEFAULT_NUM_HISTOGRAM_BINS, DEFAULT_CHAIN_SEARCH_LIMIT, SAMPLE_CONSTRUCTORS, CHAIN_CONSTRUCTORS, ID_CONT_SRC, ID_START_SRC } from "../constants";
 import type { InlineSample } from "./types";
 
 /** Module-level capture for inline distribution samples during formula evaluation.
@@ -195,7 +195,7 @@ interface CrossSheetCtx {
 function isChainCell(cell: Cell): boolean {
   if (cell.content.kind !== "formula") return false;
   const expr = cell.content.expr;
-  return (expr.type === "funcCall" && expr.name === "chain") || expr.type === "markov";
+  return (expr.type === "funcCall" && CHAIN_CONSTRUCTORS.has(expr.name)) || expr.type === "markov";
 }
 
 /** Get all direct dependencies of a cell as cell addresses (local only) */
@@ -559,6 +559,171 @@ function captureDist(label: string, result: CellResult, expectedValue?: number):
     _inlineSampleCapture.push({ label, values: result.values });
   }
   return result;
+}
+
+/** Resolve Normal(mean, std | x%) arguments (2 args; argless handled by caller). */
+function normalParams(argExprs: Expr[], args: CellResult[]): { mean: number; std: number; label: string } {
+  if (args.length !== 2) throw new Error("Normal() takes 0 or 2 arguments");
+  const [meanR, stdR] = args;
+  if (meanR.kind !== "scalar" || stdR.kind !== "scalar")
+    throw new Error("Normal() parameters must be scalars");
+  // Percent CV: second arg AST is a percent literal → std = (pct/100)·|mean|
+  if (argExprs[1].type === "percent") {
+    const pct = argExprs[1].value;
+    return { mean: meanR.value, std: (pct / 100) * Math.abs(meanR.value), label: `Normal(${meanR.value}, ${pct}%)` };
+  }
+  return { mean: meanR.value, std: stdR.value, label: `Normal(${meanR.value}, ${stdR.value})` };
+}
+
+/** Resolve LogNormal(mu, sigma | mean, x%) arguments to log-space parameters. */
+function logNormalParams(argExprs: Expr[], args: CellResult[]): { mu: number; sigma: number; label: string; ev: number } {
+  if (args.length !== 2) throw new Error("LogNormal() takes 0 or 2 arguments");
+  const [muR, sigmaR] = args;
+  if (muR.kind !== "scalar" || sigmaR.kind !== "scalar")
+    throw new Error("LogNormal() parameters must be scalars");
+  // Percent CV: first arg is real-space mean, second is arithmetic CV.
+  if (argExprs[1].type === "percent") {
+    if (muR.value <= 0) throw new Error("LogNormal mean must be positive when using % CV");
+    const cv = argExprs[1].value / 100;
+    const sigma2 = Math.log(1 + cv * cv);
+    return {
+      mu: Math.log(muR.value) - sigma2 / 2, sigma: Math.sqrt(sigma2),
+      label: `LogNormal(${muR.value}, ${argExprs[1].value}%)`, ev: muR.value,
+    };
+  }
+  return {
+    mu: muR.value, sigma: sigmaR.value,
+    label: `LogNormal(${muR.value}, ${sigmaR.value})`, ev: Math.exp(muR.value + sigmaR.value * sigmaR.value / 2),
+  };
+}
+
+/** Indices that sort `values` ascending (stable). */
+function argsort(values: Float64Array): Int32Array {
+  const idx = new Int32Array(values.length);
+  for (let i = 0; i < idx.length; i++) idx[i] = i;
+  idx.sort((a, b) => values[a] - values[b] || a - b);
+  return idx;
+}
+
+// ─── Chain definition and sugar ──────────────────────────────────────
+
+/** Register `body`/`init` as the current cell's chain and return the initial
+ *  value (what direct references to the chain cell see). */
+function defineChain(
+  bodyExpr: Expr, initExpr: Expr,
+  results: Map<CellAddress, CellResult>, varMap: Map<string, CellAddress>, n: number,
+  cells: Map<CellAddress, Cell>, ctx?: CrossSheetCtx,
+): CellResult {
+  const initResult = evalExpr(initExpr, results, varMap, n, cells, ctx);
+  const bodyDeps = exprDeps(bodyExpr);
+  const selfVar = _currentEvalCell?.variableName;
+  for (const v of bodyDeps.varRefs) {
+    if (v === selfVar || RESERVED_VARS.has(v)) continue;
+    if (!varMap.get(v)) throw new Error(`Unknown variable in Chain body: ${v}`);
+  }
+  if (_currentEvalCell) {
+    _currentEvalCell.chainBody = bodyExpr;
+    _currentEvalCell.chainInitial = initResult;
+    _currentEvalCell.chainCache = undefined; // clear cache on re-eval
+    _currentEvalCell.markovDef = undefined;
+    _currentEvalCell.markovStateCache = undefined;
+  }
+  return initResult;
+}
+
+const SELF: Expr = { type: "varRef", name: "_self" };
+const num = (value: number): Expr => ({ type: "number", value });
+const call = (name: string, args: Expr[]): Expr => ({ type: "funcCall", name, args });
+const bin = (op: "+" | "-" | "*" | "/", left: Expr, right: Expr): Expr => ({ type: "binOp", op, left, right });
+
+/** if(Bernoulli(p), _self, dist) */
+function stickyBody(distExpr: Expr, p: number): Expr {
+  return call("if", [call("bernoulli", [num(p)]), SELF, distExpr]);
+}
+
+/** A distribution constructor call for AutoRegression: either written inline,
+ *  or a reference to a cell whose content is a distribution literal. */
+function resolveDistConstructor(
+  expr: Expr, varMap: Map<string, CellAddress>, cells: Map<CellAddress, Cell>, ctx?: CrossSheetCtx,
+): Expr & { type: "funcCall" } {
+  if (expr.type === "funcCall" && SAMPLE_CONSTRUCTORS.has(expr.name)) return expr;
+  let cell: Cell | undefined;
+  if (expr.type === "cellRef") {
+    cell = cells.get(toAddress(expr.col, expr.row));
+  } else if (expr.type === "varRef") {
+    const addr = varMap.get(expr.name);
+    if (!addr) throw new Error(`Unknown variable: ${expr.name}`);
+    cell = cells.get(addr);
+  } else if ((expr.type === "sheetCellRef" || expr.type === "sheetVarRef") && ctx) {
+    const idx = findSheetIndex(ctx.allSheets, expr.sheet);
+    if (idx < 0) throw new Error(`Unknown sheet: ${expr.sheet}`);
+    const addr = expr.type === "sheetCellRef" ? toAddress(expr.col, expr.row) : ctx.allVarMaps[idx].get(expr.name);
+    cell = addr ? ctx.allSheets[idx].cells.get(addr) : undefined;
+  }
+  if (cell?.content.kind === "distribution") return distributionToExpr(cell.content.dist);
+  throw new Error("AutoRegression() needs a distribution constructor, or a cell containing one");
+}
+
+function distributionToExpr(d: Distribution): Expr & { type: "funcCall" } {
+  switch (d.type) {
+    case "Normal": return call("normal", [num(d.mean), num(d.std)]) as Expr & { type: "funcCall" };
+    case "LogNormal": return call("lognormal", [num(d.mu), num(d.sigma)]) as Expr & { type: "funcCall" };
+    case "Uniform": return call("uniform", [num(d.low), num(d.high)]) as Expr & { type: "funcCall" };
+    case "Triangular": return call("triangular", [num(d.low), num(d.mode), num(d.high)]) as Expr & { type: "funcCall" };
+    case "Beta": return call("beta", [num(d.alpha), num(d.beta)]) as Expr & { type: "funcCall" };
+    case "Pareto": return call("pareto", [num(d.xMin), num(d.alpha)]) as Expr & { type: "funcCall" };
+    case "Poisson": return call("poisson", [num(d.lambda)]) as Expr & { type: "funcCall" };
+    case "Binomial": return call("binomial", [num(d.n), num(d.p)]) as Expr & { type: "funcCall" };
+    case "StudentT": return call("studentt", [num(d.nu), num(d.mu), num(d.sigma)]) as Expr & { type: "funcCall" };
+  }
+}
+
+/** Build the step body for AutoRegression(dist, phi). Each construction has
+ *  stationary marginal `dist` and lag-1 autocorrelation phi:
+ *    Normal      → Gaussian AR(1)
+ *    LogNormal   → Gaussian AR(1) on the log (phi applies to logs)
+ *    Poisson     → INAR(1): binomial thinning + Poisson innovation
+ *    Bernoulli, Discrete → sticky redraw (hold with probability phi)
+ *    otherwise   → Gaussian copula: AR(1) on normal scores, rank-mapped onto a fresh draw */
+function autoRegressionBody(
+  distExpr: Expr & { type: "funcCall" }, phi: number,
+  results: Map<CellAddress, CellResult>, varMap: Map<string, CellAddress>, n: number,
+  cells: Map<CellAddress, Cell>, ctx?: CrossSheetCtx,
+): Expr {
+  const innov = Math.sqrt(1 - phi * phi);
+  const distArgs = distExpr.args.map((e) => evalExpr(e, results, varMap, n, cells, ctx));
+  switch (distExpr.name) {
+    case "normal": {
+      const { mean, std } = distArgs.length === 0 ? { mean: 0, std: 1 } : normalParams(distExpr.args, distArgs);
+      // mean + phi·(_self − mean) + std·√(1−phi²)·Z
+      return bin("+", bin("+", num(mean), bin("*", num(phi), bin("-", SELF, num(mean)))),
+        bin("*", num(std * innov), call("normal", [])));
+    }
+    case "lognormal": {
+      const { mu, sigma } = distArgs.length === 0 ? { mu: 0, sigma: 1 } : logNormalParams(distExpr.args, distArgs);
+      // exp(mu + phi·(log(_self) − mu) + sigma·√(1−phi²)·Z)
+      return call("exp", [bin("+", bin("+", num(mu), bin("*", num(phi), bin("-", call("log", [SELF]), num(mu)))),
+        bin("*", num(sigma * innov), call("normal", [])))]);
+    }
+    case "poisson": {
+      if (phi < 0) throw new Error("AutoRegression() on Poisson needs a correlation in [0, 1)");
+      const lambdaR = distArgs[0];
+      const lambda = lambdaR === undefined ? 1 : lambdaR.kind === "scalar" ? lambdaR.value : NaN;
+      if (isNaN(lambda)) throw new Error("Poisson() parameter must be scalar");
+      // Binomial(_self, phi) + Poisson(lambda·(1−phi))
+      return bin("+", call("binomial", [SELF, num(phi)]), call("poisson", [num(lambda * (1 - phi))]));
+    }
+    case "bernoulli":
+    case "discrete":
+      if (phi < 0) throw new Error("AutoRegression() on a discrete distribution needs a correlation in [0, 1)");
+      return stickyBody(distExpr, phi);
+    default:
+      // RankMap(phi·NormalScore(_self) + √(1−phi²)·Z, dist)
+      return call("rankmap", [
+        bin("+", bin("*", num(phi), call("normalscore", [SELF])), bin("*", num(innov), call("normal", []))),
+        distExpr,
+      ]);
+  }
 }
 
 // ─── Markov compilation ──────────────────────────────────────────────
@@ -969,22 +1134,29 @@ function evalFunc(
   // Chain(body, initial) — define an iterative process
   if (name === "chain") {
     if (argExprs.length !== 2) throw new Error("Chain(body, initial) takes 2 arguments");
-    // Evaluate the initial value (can be scalar or distribution)
-    const initResult = evalExpr(argExprs[1], results, varMap, n, cells, ctx);
-    // Validate body references before storing
-    const bodyDeps = exprDeps(argExprs[0]);
-    const selfVar = _currentEvalCell?.variableName;
-    for (const v of bodyDeps.varRefs) {
-      if (v === selfVar || RESERVED_VARS.has(v)) continue;
-      if (!varMap.get(v)) throw new Error(`Unknown variable in Chain body: ${v}`);
-    }
-    // Store chain metadata on the cell for lazy step computation
-    if (_currentEvalCell) {
-      _currentEvalCell.chainBody = argExprs[0];
-      _currentEvalCell.chainInitial = initResult;
-      _currentEvalCell.chainCache = undefined; // clear cache on re-eval
-    }
-    return initResult; // direct references to chain cell get the initial value
+    return defineChain(argExprs[0], argExprs[1], results, varMap, n, cells, ctx);
+  }
+
+  // StickyRedraw(dist, p) — hold the previous value with probability p, else redraw
+  if (name === "stickyredraw") {
+    if (argExprs.length !== 2) throw new Error("StickyRedraw(dist, p) takes 2 arguments");
+    const pR = evalExpr(argExprs[1], results, varMap, n, cells, ctx);
+    if (pR.kind !== "scalar" || !(pR.value >= 0 && pR.value <= 1))
+      throw new Error("StickyRedraw() hold probability must be a scalar in [0, 1]");
+    return defineChain(stickyBody(argExprs[0], pR.value), argExprs[0], results, varMap, n, cells, ctx);
+  }
+
+  // AutoRegression(dist, phi) — stationary process with marginal `dist` and
+  // lag-1 autocorrelation phi; the construction depends on the family
+  if (name === "autoregression") {
+    if (argExprs.length !== 2) throw new Error("AutoRegression(dist, phi) takes 2 arguments");
+    const phiR = evalExpr(argExprs[1], results, varMap, n, cells, ctx);
+    if (phiR.kind !== "scalar" || !(phiR.value > -1 && phiR.value < 1))
+      throw new Error("AutoRegression() correlation must be a scalar strictly between -1 and 1");
+    const phi = phiR.value;
+    const distExpr = resolveDistConstructor(argExprs[0], varMap, cells, ctx);
+    const body = autoRegressionBody(distExpr, phi, results, varMap, n, cells, ctx);
+    return defineChain(body, distExpr, results, varMap, n, cells, ctx);
   }
 
   // ChainIndex(chain, condition) — find first step where condition is true
@@ -1191,20 +1363,9 @@ function evalFunc(
         return captureDist(`Normal()`,
           { kind: "samples", values: sample({ type: "Normal", mean: 0, std: 1 }, n) }, 0);
       }
-      if (args.length !== 2) throw new Error("Normal() takes 0 or 2 arguments");
-      const [meanR, stdR] = args;
-      if (meanR.kind !== "scalar" || stdR.kind !== "scalar")
-        throw new Error("Normal() parameters must be scalars");
-      // Percent CV: second arg AST is a percent literal → std = (pct/100)·|mean|
-      if (argExprs[1].type === "percent") {
-        const std = (argExprs[1].value / 100) * Math.abs(meanR.value);
-        return captureDist(`Normal(${meanR.value}, ${argExprs[1].value}%)`,
-          { kind: "samples", values: sample({ type: "Normal", mean: meanR.value, std }, n) },
-          meanR.value);
-      }
-      return captureDist(`Normal(${meanR.value}, ${stdR.value})`,
-        { kind: "samples", values: sample({ type: "Normal", mean: meanR.value, std: stdR.value }, n) },
-        meanR.value);
+      const { mean, std, label } = normalParams(argExprs, args);
+      return captureDist(label,
+        { kind: "samples", values: sample({ type: "Normal", mean, std }, n) }, mean);
     }
     case "lognormal": {
       if (args.length === 0) {
@@ -1212,24 +1373,9 @@ function evalFunc(
           { kind: "samples", values: sample({ type: "LogNormal", mu: 0, sigma: 1 }, n) },
           Math.exp(0.5));
       }
-      if (args.length !== 2) throw new Error("LogNormal() takes 0 or 2 arguments");
-      const [muR, sigmaR] = args;
-      if (muR.kind !== "scalar" || sigmaR.kind !== "scalar")
-        throw new Error("LogNormal() parameters must be scalars");
-      // Percent CV: first arg is real-space mean, second is arithmetic CV.
-      if (argExprs[1].type === "percent") {
-        if (muR.value <= 0) throw new Error("LogNormal mean must be positive when using % CV");
-        const cv = argExprs[1].value / 100;
-        const sigma2 = Math.log(1 + cv * cv);
-        const sigma = Math.sqrt(sigma2);
-        const mu = Math.log(muR.value) - sigma2 / 2;
-        return captureDist(`LogNormal(${muR.value}, ${argExprs[1].value}%)`,
-          { kind: "samples", values: sample({ type: "LogNormal", mu, sigma }, n) },
-          muR.value);
-      }
-      return captureDist(`LogNormal(${muR.value}, ${sigmaR.value})`,
-        { kind: "samples", values: sample({ type: "LogNormal", mu: muR.value, sigma: sigmaR.value }, n) },
-        Math.exp(muR.value + sigmaR.value * sigmaR.value / 2));
+      const { mu, sigma, label, ev } = logNormalParams(argExprs, args);
+      return captureDist(label,
+        { kind: "samples", values: sample({ type: "LogNormal", mu, sigma }, n) }, ev);
     }
     case "uniform": {
       if (args.length === 0) {
@@ -1289,6 +1435,50 @@ function evalFunc(
       return captureDist(`Poisson(${lambda})`,
         { kind: "samples", values: sample({ type: "Poisson", lambda }, n) }, lambda);
     }
+    case "binomial": {
+      if (args.length !== 2) throw new Error("Binomial(n, p) takes 2 arguments");
+      const [trialsR, pR] = args;
+      if (pR.kind !== "scalar") throw new Error("Binomial() probability must be a scalar");
+      const p = pR.value;
+      if (trialsR.kind === "scalar") {
+        return captureDist(`Binomial(${trialsR.value}, ${p})`,
+          { kind: "samples", values: sample({ type: "Binomial", n: trialsR.value, p }, n) },
+          trialsR.value * p);
+      }
+      // Elementwise trial counts (binomial thinning, e.g. INAR): not captured
+      // as an input since it is a function of another sample array
+      const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        out[i] = _deterministicMode ? trialsR.values[i] * p : sampleBinomial(trialsR.values[i], p);
+      }
+      return { kind: "samples", values: out };
+    }
+
+    // RankMap(y, x): x's values rearranged to have y's rank order (Gaussian
+    // copula building block: preserves x's marginal, borrows y's dependence)
+    case "rankmap": {
+      if (args.length !== 2) throw new Error("RankMap(y, x) takes 2 arguments");
+      const [y, x] = args;
+      if (x.kind === "scalar") return x;
+      const sortedX = new Float64Array(x.values).sort();
+      if (y.kind === "scalar") return { kind: "scalar", value: sortedX[Math.floor(n / 2)] };
+      const order = argsort(y.values);
+      const out = new Float64Array(n);
+      for (let k = 0; k < n; k++) out[order[k]] = sortedX[k];
+      return { kind: "samples", values: out };
+    }
+
+    // NormalScore(x): each sample's rank mapped to a standard normal quantile
+    case "normalscore": {
+      if (args.length !== 1) throw new Error("NormalScore(x) takes 1 argument");
+      const [x] = args;
+      if (x.kind === "scalar") return { kind: "scalar", value: 0 };
+      const order = argsort(x.values);
+      const out = new Float64Array(n);
+      for (let k = 0; k < n; k++) out[order[k]] = normalQuantile((k + 0.5) / n);
+      return { kind: "samples", values: out };
+    }
+
     case "studentt": {
       if (args.length !== 1 && args.length !== 3)
         throw new Error("StudentT(nu) or StudentT(nu, mu, sigma) takes 1 or 3 arguments");
