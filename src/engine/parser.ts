@@ -808,7 +808,8 @@ class Parser {
           throw new Error("Expected ')'");
         }
         this.advance(); // consume ')'
-        return { type: "funcCall", name: tok.name, args };
+        // Bracket suffix on a call: StickyRedraw(...)[n], f(x)[a:b]
+        return this.parseBracketSuffix({ type: "funcCall", name: tok.name, args });
       }
       // Variable reference
       return { type: "varRef", name: tok.name };
@@ -821,7 +822,8 @@ class Parser {
         throw new Error("Expected ')'");
       }
       this.advance();
-      return expr;
+      // Bracket suffix on a parenthesized chain expression: (a * b)[n]
+      return this.parseBracketSuffix(expr);
     }
 
     throw new Error(`Unexpected token: ${JSON.stringify(tok)}`);

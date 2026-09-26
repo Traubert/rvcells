@@ -738,6 +738,15 @@ describe("parseExpr", () => {
       }
     });
 
+    it("parses bracket suffixes on parenthesized expressions and calls", () => {
+      const step = parseExpr("(a * b)[3]");
+      expect(step.type).toBe("chainStep");
+      if (step.type === "chainStep") expect(step.target.type).toBe("binOp");
+      const range = parseExpr("sum(f(x)[0:2])");
+      expect(range.type).toBe("funcCall");
+      if (range.type === "funcCall") expect(range.args[0].type).toBe("chainRange");
+    });
+
     it("parses inline emission definitions", () => {
       const result = parseExpr("Markov(s0 = Normal(100, 10): 0.5 -> s0, 0.5 -> s1; s1 = Uniform(0, 50): 1 -> s0)");
       expect(result.type).toBe("markov");

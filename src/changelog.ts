@@ -42,7 +42,7 @@ export const changelog: ChangelogEntry[] = [
   { version: 31, summary: "Renaming a variable (or the label naming a := cell) rewrites its usage sites in all formulas, like sheet renames already did — skipped if the new name collides; dependents of a removed variable now error immediately" },
   { version: 32, summary: "Closing a non-empty sheet now asks for confirmation" },
   { version: 33, summary: "Autocorrelated processes: StickyRedraw(dist, p) holds the previous step with probability p, AutoRegression(dist, phi) keeps dist as the marginal with lag-1 autocorrelation phi (Gaussian AR(1), log-space for LogNormal, INAR for Poisson, copula otherwise); Binomial(n, p) distribution" },
-  { version: 34, summary: "Chains compose: a formula that reads a chain (= a * b) is itself a chain, stepping with its inputs; fixed(cell) keeps a distribution's per-world samples across steps instead of redrawing them" },
+  { version: 34, summary: "Chains compose: a formula that reads a chain (= a * b) is itself a chain, stepping with its inputs, and brackets work on any chain expression ((a * b)[3], sum((a * b)[0:12])); fixed(cell) keeps a distribution's per-world samples across steps instead of redrawing them" },
 ];
 
 export const CURRENT_VERSION = changelog[changelog.length - 1].version;

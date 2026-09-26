@@ -29,6 +29,14 @@ let _currentChainSelf: CellResult | null = null;
  *  fixed(cell) reads, so a held cell keeps its per-world samples. */
 let _chainBaseResults: Map<CellAddress, CellResult> | null = null;
 
+/** Anonymous chains — `(a * b)[n]` or `StickyRedraw(...)[n]` — live in
+ *  throwaway cells memoized per cell evaluation by expression structure, so
+ *  identical sub-expressions in one formula share a trajectory. The map is
+ *  created and dropped by evalCell, so their step caches never outlive the
+ *  evaluation that built them. */
+let _anonChains: Map<string, Cell> | null = null;
+const ANON_CHAIN_ADDR: CellAddress = "__anon__";
+
 /** Global cell address: "sheetIdx:cellAddr" */
 type GlobalAddr = string;
 
@@ -215,6 +223,35 @@ function clearChainFields(cell: Cell): void {
   cell.chainCache = undefined;
   cell.markovDef = undefined;
   cell.markovStateCache = undefined;
+}
+
+/** A throwaway chain cell for a bracket-indexed expression that is not a
+ *  reference: a derived chain of the expression, or the inline constructor
+ *  it evaluates to. Step 0 is evaluated against the base results so that a
+ *  use inside another chain's body is not skewed by that body's shadowing. */
+function anonymousChain(
+  target: Expr, results: Map<CellAddress, CellResult>, varMap: Map<string, CellAddress>,
+  n: number, cells: Map<CellAddress, Cell>, ctx?: CrossSheetCtx,
+): Cell {
+  const key = JSON.stringify(target);
+  const memo = _anonChains?.get(key);
+  if (memo) return memo;
+  const temp: Cell = { raw: "", content: { kind: "formula", expr: target } };
+  const prevEvalCell = _currentEvalCell;
+  _currentEvalCell = temp; // inline constructors attach their chain state here
+  try {
+    const init = evalExpr(target, _chainBaseResults ?? results, varMap, n, cells, ctx);
+    if (!temp.chainBody) {
+      if (!hasDirectChainRef(target, varMap, cells))
+        throw new Error("Bracket index requires a chain-valued expression");
+      temp.chainBody = target;
+      temp.chainInitial = init;
+    }
+  } finally {
+    _currentEvalCell = prevEvalCell;
+  }
+  _anonChains?.set(key, temp);
+  return temp;
 }
 
 /** Does the formula read a chain cell's value directly (as opposed to
@@ -496,6 +533,7 @@ function evalExpr(
       let targetCells = cells;
       let targetResults = results;
       let targetVarMap = varMap;
+      let anonCell: Cell | undefined;
       if (target.type === "cellRef") {
         targetAddr = toAddress(target.col, target.row);
       } else if (target.type === "varRef") {
@@ -516,9 +554,10 @@ function evalExpr(
         targetResults = ctx.allResults[targetIdx];
         targetVarMap = ctx.allVarMaps[targetIdx];
       } else {
-        throw new Error("Chain step target must be a cell reference or variable");
+        anonCell = anonymousChain(target, results, varMap, n, cells, ctx);
+        targetAddr = ANON_CHAIN_ADDR;
       }
-      const targetCell = targetCells.get(targetAddr);
+      const targetCell = anonCell ?? targetCells.get(targetAddr);
       if (!targetCell?.chainBody) throw new Error("Bracket index requires a Chain cell");
       const stepResult = evalExpr(expr.step, results, varMap, n, cells, ctx);
       if (stepResult.kind !== "scalar") throw new Error("Chain step must be a scalar");
@@ -921,6 +960,18 @@ function evaluateChainStep(
     return chainCell.chainCache[targetStep];
   }
 
+  // Stepping from outside any cell evaluation (detail panel, ChainIndex from
+  // the UI): give anonymous chains in the body a memo scope for this call so
+  // they step incrementally instead of restarting at every t; dropped on return
+  if (_anonChains === null) {
+    _anonChains = new Map();
+    try {
+      return evaluateChainStep(chainCell, chainAddr, targetStep, results, varMap, n, cells, ctx);
+    } finally {
+      _anonChains = null;
+    }
+  }
+
   // Collect body dependencies for auto-resample/auto-sync (fixed() refs are held)
   const { cellRefs, varRefs } = exprDeps(chainCell.chainBody, { skipFixed: true });
   const depAddrs: CellAddress[] = [];
@@ -1047,6 +1098,7 @@ function expandArgs(
       // Resolve chain cell
       const target = e.target;
       let targetAddr: CellAddress;
+      let anonCell: Cell | undefined;
       if (target.type === "cellRef") {
         targetAddr = toAddress(target.col, target.row);
       } else if (target.type === "varRef") {
@@ -1084,9 +1136,10 @@ function expandArgs(
         }
         continue;
       } else {
-        throw new Error("Chain range target must be a cell reference or variable");
+        anonCell = anonymousChain(target, results, varMap, n, cells, ctx);
+        targetAddr = ANON_CHAIN_ADDR;
       }
-      const targetCell = cells.get(targetAddr);
+      const targetCell = anonCell ?? cells.get(targetAddr);
       if (!targetCell?.chainBody) throw new Error("Chain range target must be a Chain or Markov cell");
       const startResult = evalExpr(e.start, results, varMap, n, cells, ctx);
       const endResult = evalExpr(e.end, results, varMap, n, cells, ctx);
@@ -1621,6 +1674,10 @@ function evalCell(
   // chain state to any cell, so the current cell is null for them
   const prevEvalCell = _currentEvalCell;
   _currentEvalCell = tempOnly ? null : cell;
+  // Anonymous chains are memoized within this evaluation only; the map (and
+  // the step caches it holds) is dropped when the evaluation ends
+  const prevAnonChains = _anonChains;
+  _anonChains = new Map();
   // Explicit chains re-attach their state when evaluated; anything else
   // starts clean and is lifted below if it reads a chain directly
   if (!tempOnly && !isChainCell(cell)) clearChainFields(cell);
@@ -1670,6 +1727,7 @@ function evalCell(
   }
   if (!tempOnly) cell.result = result;
   _currentEvalCell = prevEvalCell;
+  _anonChains = prevAnonChains;
   if (result) {
     results.set(addr, result);
   } else {
@@ -1856,7 +1914,10 @@ function globalWouldCycle(
 function clearChainCaches(allSheets: Sheet[]): void {
   for (const sheet of allSheets) {
     for (const cell of sheet.cells.values()) {
+      // Both caches go together: a Markov cell restarted with a stale state
+      // cache would pair old states with new emissions
       if (cell.chainCache) cell.chainCache = undefined;
+      if (cell.markovStateCache) cell.markovStateCache = undefined;
     }
   }
 }

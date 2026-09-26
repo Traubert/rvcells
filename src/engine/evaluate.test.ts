@@ -1020,6 +1020,21 @@ describe("Chain", () => {
     expect(sheet.cells.get("A1")!.error).toContain("Unknown variable in Chain body: bar");
   });
 
+  it("recalculation drops both the step cache and the Markov state cache", () => {
+    const sheet = makeSheet({
+      A1: "lo = 0",
+      A2: "hi = 1",
+      A3: "m = Markov(lo: 0.5 -> hi; hi: 0.5 -> lo)",
+      B1: "= m[5]",
+    });
+    const m = sheet.cells.get("A3")!;
+    expect(m.markovStateCache!.length).toBe(6);
+    // Any recalc clears the caches; with nothing left to step the chain, they stay empty
+    setCellRaw(sheet, "B1", "", undefined, undefined, settingsWithSamples(1000));
+    expect(m.chainCache).toBeUndefined();
+    expect(m.markovStateCache).toBeUndefined();
+  });
+
   it("_t cannot be used as a variable name", () => {
     const sheet = makeSheet({ A1: "_t = 5" });
     expect(sheet.cells.get("A1")!.error).toContain("reserved");
@@ -1334,6 +1349,46 @@ describe("implicit chain lifting", () => {
     expect(sheet.cells.get("B1")!.error).toBeUndefined();
     expect(sheet.cells.get("B1")!.chainBody).toBeUndefined();
     expect(sheet.cells.get("A3")!.chainBody).toBeUndefined();
+  });
+});
+
+describe("bracket index on chain expressions", () => {
+  it("(a * b)[n] and ranges over it", () => {
+    const sheet = makeSheet({
+      A1: "a = Chain(_self + 1, 0)",
+      A2: "b = Chain(_self * 2, 1)",
+      B1: "= (a * b)[3]",
+      B2: "= sum((a * b)[0:3])",
+      B3: "= (a * b)[3] - a[3] * b[3]",
+    });
+    expect(mean(sheet, "B1")).toBeCloseTo(24, 6);
+    expect(mean(sheet, "B2")).toBeCloseTo(34, 6);  // 0 + 2 + 8 + 24
+    expect(std(sheet, "B3")).toBe(0);
+    expect(sheet.cells.get("B1")!.chainBody).toBeUndefined(); // a fixed step, not a chain
+  });
+
+  it("memoizes identical expressions within one formula into one trajectory", () => {
+    const sheet = makeSheet({
+      A1: "h = Normal(100, 10)",
+      A2: "a = Chain(_self + 1, 0)",
+      B1: "= (a * h)[3] - (a * h)[3]",
+      B2: "= StickyRedraw(Uniform(), 1)[3] - StickyRedraw(Uniform(), 1)[0]",
+    }, 2000);
+    expect(std(sheet, "B1")).toBe(0);
+    expect(std(sheet, "B2")).toBe(0);
+  });
+
+  it("inline constructors index directly and do not turn the cell into a chain", () => {
+    const sheet = makeSheet({ A1: "= AutoRegression(Normal(0, 1), 0.5)[5]", B1: "= Chain(_self + 1, 0)[7]" }, 2000);
+    expect(sheet.cells.get("A1")!.error).toBeUndefined();
+    expect(sheet.cells.get("A1")!.chainBody).toBeUndefined();
+    expect(std(sheet, "A1")).toBeCloseTo(1, 0);
+    expect(mean(sheet, "B1")).toBe(7);
+  });
+
+  it("rejects a non-chain expression", () => {
+    const sheet = makeSheet({ A1: "= (2 * 3)[1]" });
+    expect(sheet.cells.get("A1")!.error).toContain("chain-valued expression");
   });
 });
 
